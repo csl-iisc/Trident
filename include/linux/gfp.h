@@ -510,6 +510,17 @@ extern struct page *alloc_pages_vma(gfp_t gfp_mask, int order,
 #define alloc_page_vma_node(gfp_mask, vma, addr, node)		\
 	alloc_pages_vma(gfp_mask, 0, vma, addr, node, false)
 
+// <lptr::extension>
+#define alloc_pages_ptable(gpf_mask, order) \
+       alloc_pages_node(0, gpf_mask, order)
+
+#define alloc_page_ptable(gpf_mask) \
+       alloc_pages_node(0, gpf_mask, 0)
+// </lptr::extension>
+
+
+
+
 extern unsigned long __get_free_pages(gfp_t gfp_mask, unsigned int order);
 extern unsigned long get_zeroed_page(gfp_t gfp_mask);
 
