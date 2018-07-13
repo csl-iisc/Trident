@@ -20,14 +20,27 @@ gfp_t __userpte_alloc_gfp = PGALLOC_GFP | PGALLOC_USER_GFP;
 
 pte_t *pte_alloc_one_kernel(struct mm_struct *mm, unsigned long address)
 {
-	return (pte_t *)__get_free_page(PGALLOC_GFP & ~__GFP_ACCOUNT);
+	// <lptr::extension>
+	struct page *page;
+
+	page = alloc_pages_ptable(PGALLOC_GFP & ~__GFP_ACCOUNT, 0);
+	if (page) {
+			return (pte_t *) page_address(page);    
+	}
+	return NULL;
+	//return (pte_t *)__get_free_page(PGALLOC_GFP & ~__GFP_ACCOUNT);
+	// </lptr::extension>
 }
 
 pgtable_t pte_alloc_one(struct mm_struct *mm, unsigned long address)
 {
 	struct page *pte;
 
-	pte = alloc_pages(__userpte_alloc_gfp, 0);
+	// <lptr::extension>
+	pte = alloc_pages_ptable(__userpte_alloc_gfp, 0);
+	//pte = alloc_pages(__userpte_alloc_gfp, 0);
+	// </lptr::extension>
+
 	if (!pte)
 		return NULL;
 	if (!pgtable_page_ctor(pte)) {
@@ -223,7 +236,17 @@ static int preallocate_pmds(struct mm_struct *mm, pmd_t *pmds[])
 		gfp &= ~__GFP_ACCOUNT;
 
 	for(i = 0; i < PREALLOCATED_PMDS; i++) {
-		pmd_t *pmd = (pmd_t *)__get_free_page(gfp);
+		// <lptr::extension>
+		struct page *page;
+		pmd_t *pmd = NULL;
+
+		page = alloc_pages_ptable(gfp, 0);
+		if (page) {
+			pmd  = (pmd_t *) page_address(page);    
+		}
+		//pmd_t *pmd = (pmd_t *)__get_free_page(gfp);
+		// </lptr::extension>
+
 		if (!pmd)
 			failed = true;
 		if (pmd && !pgtable_pmd_page_ctor(virt_to_page(pmd))) {
@@ -338,8 +361,18 @@ static inline pgd_t *_pgd_alloc(void)
 	 * If no SHARED_KERNEL_PMD, PAE kernel is running as a Xen domain.
 	 * We allocate one page for pgd.
 	 */
-	if (!SHARED_KERNEL_PMD)
-		return (pgd_t *)__get_free_page(PGALLOC_GFP);
+	if (!SHARED_KERNEL_PMD) {
+		// <lptr::extension>
+		struct page *page;
+
+		page = alloc_pages_ptable(PGALLOC_GFP, 0);
+		if (!page)
+			return 0;
+		return (pgd_t *) page_address(page);
+		// return (pgd_t *)__get_free_page(PGALLOC_GFP);
+		// </lptr::extension>
+	}
+
 
 	/*
 	 * Now PAE kernel is not running as a Xen domain. We can allocate
@@ -359,7 +392,15 @@ static inline void _pgd_free(pgd_t *pgd)
 
 static inline pgd_t *_pgd_alloc(void)
 {
-	return (pgd_t *)__get_free_pages(PGALLOC_GFP, PGD_ALLOCATION_ORDER);
+	// <lptr::extension>
+	struct page *page;
+
+	page = alloc_pages_ptable(PGALLOC_GFP, PGD_ALLOCATION_ORDER);
+	if (!page)
+		return 0;
+	return (pgd_t *) page_address(page);
+	//return (pgd_t *)__get_free_pages(PGALLOC_GFP, PGD_ALLOCATION_ORDER);
+	// </lptr::extension>
 }
 
 static inline void _pgd_free(pgd_t *pgd)
