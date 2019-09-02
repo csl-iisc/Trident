@@ -724,7 +724,7 @@ pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address)
 		goto out;
 
 	pud = pud_offset(p4d, address);
-	if (!pud_present(*pud))
+	if (!pud_present(*pud) || pud_trans_huge(*pud))
 		goto out;
 
 	pmd = pmd_offset(pud, address);
