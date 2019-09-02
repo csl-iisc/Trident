@@ -20,9 +20,10 @@
 #include <linux/atomic.h>
 #include <asm/page.h>
 
+/* Extend the MAX_ORDER of the buddy allocator to keep track of 1GB regions. */
 /* Free memory management - zoned buddy allocator.  */
 #ifndef CONFIG_FORCE_MAX_ZONEORDER
-#define MAX_ORDER 11
+#define MAX_ORDER 19
 #else
 #define MAX_ORDER CONFIG_FORCE_MAX_ZONEORDER
 #endif
