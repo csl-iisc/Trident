@@ -64,6 +64,7 @@
 #include <linux/backing-dev.h>
 #include <linux/page_idle.h>
 #include <linux/memremap.h>
+#include <linux/page-flags.h>
 
 #include <asm/tlbflush.h>
 
@@ -1280,6 +1281,11 @@ static void page_remove_anon_compound_rmap(struct page *page)
 	if (unlikely(PageMlocked(page)))
 		clear_page_mlock(page);
 
+	if (PageCompound(page) && page[1].compound_dtor == TRANSHUGE_HUGE_PAGE_DTOR) {
+		/* Defer split 1GB anonymous pages. */
+    deferred_split_huge_page(page);
+		return;
+	}
 	if (nr) {
 		__mod_node_page_state(page_pgdat(page), NR_ANON_MAPPED, -nr);
 		deferred_split_huge_page(page);
