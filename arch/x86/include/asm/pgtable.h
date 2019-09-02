@@ -1087,6 +1087,7 @@ static inline void ptep_set_wrprotect(struct mm_struct *mm,
 #define flush_tlb_fix_spurious_fault(vma, address) do { } while (0)
 
 #define mk_pmd(page, pgprot)   pfn_pmd(page_to_pfn(page), (pgprot))
+#define mk_pud(page, pgprot)   pfn_pud(page_to_pfn(page), (pgprot))
 
 #define  __HAVE_ARCH_PMDP_SET_ACCESS_FLAGS
 extern int pmdp_set_access_flags(struct vm_area_struct *vma,
@@ -1150,6 +1151,21 @@ static inline pmd_t pmdp_establish(struct vm_area_struct *vma,
 	} else {
 		pmd_t old = *pmdp;
 		*pmdp = pmd;
+		return old;
+	}
+}
+#endif
+
+#ifndef pudp_establish
+#define pudp_establish pudp_establish
+static inline pud_t pudp_establish(struct vm_area_struct *vma,
+		unsigned long address, pud_t *pudp, pud_t pud)
+{
+	if (IS_ENABLED(CONFIG_SMP)) {
+		return xchg(pudp, pud);
+	} else {
+		pud_t old = *pudp;
+		*pudp = pud;
 		return old;
 	}
 }

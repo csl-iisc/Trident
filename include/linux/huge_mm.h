@@ -7,6 +7,8 @@
 #include <linux/fs.h> /* only for vma_is_dax() */
 
 extern int do_huge_pmd_anonymous_page(struct vm_fault *vmf);
+extern int do_huge_pud_anonymous_page(struct vm_fault *vmf);
+
 extern int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 			 pmd_t *dst_pmd, pmd_t *src_pmd, unsigned long addr,
 			 struct vm_area_struct *vma);
@@ -79,6 +81,9 @@ extern struct kobj_attribute shmem_enabled_attr;
 #define HPAGE_PMD_ORDER (HPAGE_PMD_SHIFT-PAGE_SHIFT)
 #define HPAGE_PMD_NR (1<<HPAGE_PMD_ORDER)
 
+#define HPAGE_PUD_ORDER (HPAGE_PUD_SHIFT-PAGE_SHIFT)
+#define HPAGE_PUD_NR (1 <<HPAGE_PUD_ORDER)
+
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 #define HPAGE_PMD_SHIFT PMD_SHIFT
 #define HPAGE_PMD_SIZE	((1UL) << HPAGE_PMD_SHIFT)
@@ -115,6 +120,9 @@ static inline bool transparent_hugepage_enabled(struct vm_area_struct *vma)
 
 	return false;
 }
+
+/* Always use zero 1GB pages */
+#define transparent_hugepage_use_zero_onegb_page() 1
 
 #define transparent_hugepage_use_zero_page()				\
 	(transparent_hugepage_flags &					\
@@ -219,10 +227,16 @@ struct page *follow_devmap_pud(struct vm_area_struct *vma, unsigned long addr,
 extern int do_huge_pmd_numa_page(struct vm_fault *vmf, pmd_t orig_pmd);
 
 extern struct page *huge_zero_page;
+extern struct page *huge_zero_onegb_page;
 
 static inline bool is_huge_zero_page(struct page *page)
 {
 	return READ_ONCE(huge_zero_page) == page;
+}
+
+static inline bool is_huge_zero_onegb_page(struct page *page)
+{
+	return READ_ONCE(huge_zero_onegb_page) == page;
 }
 
 static inline bool is_huge_zero_pmd(pmd_t pmd)
@@ -232,13 +246,15 @@ static inline bool is_huge_zero_pmd(pmd_t pmd)
 
 static inline bool is_huge_zero_pud(pud_t pud)
 {
-	return false;
+	return is_huge_zero_onegb_page(pud_page(pud));
 }
 
 struct page *mm_get_huge_zero_page(struct mm_struct *mm);
+struct page *mm_get_huge_zero_onegb_page(struct mm_struct *mm);
 void mm_put_huge_zero_page(struct mm_struct *mm);
 
 #define mk_huge_pmd(page, prot) pmd_mkhuge(mk_pmd(page, prot))
+#define mk_huge_pud(page, prot) pud_mkhuge(mk_pud(page, prot))
 
 static inline bool thp_migration_supported(void)
 {
