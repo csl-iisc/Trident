@@ -219,7 +219,7 @@ static inline spinlock_t *pud_trans_huge_lock(pud_t *pud,
 static inline int hpage_nr_pages(struct page *page)
 {
 	if (unlikely(PageTransHuge(page)))
-		return HPAGE_PMD_NR;
+		return (1 << (page[1].compound_order));
 	return 1;
 }
 
