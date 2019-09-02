@@ -788,7 +788,6 @@ static int __do_huge_pud_anonymous_page(struct vm_fault *vmf, struct page *page,
   return 0;
 unlock_release:
   spin_unlock(vmf->ptl);
-release:
   mem_cgroup_cancel_charge(page, memcg, true);
   put_page(page);
   return ret;
@@ -1645,6 +1644,27 @@ skip_mlock:
 
 out:
   return page;
+}
+
+/* We currently use this only for /proc/smaps. May be extended later */
+struct page *follow_trans_huge_pud(struct vm_area_struct *vma,
+				   unsigned long addr,
+				   pud_t *pud,
+				   unsigned int flags)
+{
+	struct mm_struct *mm = vma->vm_mm;
+	struct page *page = NULL;
+
+	assert_spin_locked(pud_lockptr(mm, pud));
+	/* Avoid dumping huge zero page */
+	if ((flags & FOLL_DUMP) && is_huge_zero_pud(*pud))
+		return ERR_PTR(-EFAULT);
+
+	page = pud_page(*pud);
+	VM_BUG_ON_PAGE(!PageHead(page) && !is_zone_device_page(page), page);
+	page += (addr & ~HPAGE_PUD_MASK) >> PAGE_SHIFT;
+	VM_BUG_ON_PAGE(!PageCompound(page) && !is_zone_device_page(page), page);
+	return page;
 }
 
 /* NUMA hinting page fault entry point for trans huge pmds */
