@@ -1281,7 +1281,7 @@ static void page_remove_anon_compound_rmap(struct page *page)
 	if (unlikely(PageMlocked(page)))
 		clear_page_mlock(page);
 
-	if (PageCompound(page) && page[1].compound_dtor == TRANSHUGE_HUGE_PAGE_DTOR) {
+	if (PageCompound(page) && page[1].compound_dtor == 18) {
 		/* Defer split 1GB anonymous pages. */
     deferred_split_huge_page(page);
 		return;
