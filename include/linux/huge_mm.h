@@ -30,6 +30,10 @@ extern struct page *follow_trans_huge_pmd(struct vm_area_struct *vma,
 					  unsigned long addr,
 					  pmd_t *pmd,
 					  unsigned int flags);
+extern struct page *follow_trans_huge_pud(struct vm_area_struct *vma,
+					  unsigned long addr,
+					  pud_t *pud,
+					  unsigned int flags);
 extern bool madvise_free_huge_pmd(struct mmu_gather *tlb,
 			struct vm_area_struct *vma,
 			pmd_t *pmd, unsigned long addr, unsigned long next);
