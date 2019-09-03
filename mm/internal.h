@@ -96,6 +96,7 @@ extern void putback_lru_page(struct page *page);
  * in mm/rmap.c:
  */
 extern pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address);
+extern pud_t *mm_find_pud(struct mm_struct *mm, unsigned long address);
 
 /*
  * in mm/page_alloc.c
@@ -329,6 +330,7 @@ static inline void mlock_migrate_page(struct page *newpage, struct page *page)
 }
 
 extern pmd_t maybe_pmd_mkwrite(pmd_t pmd, struct vm_area_struct *vma);
+extern pud_t maybe_pud_mkwrite(pud_t pud, struct vm_area_struct *vma);
 
 /*
  * At what user virtual address is page expected in @vma?
