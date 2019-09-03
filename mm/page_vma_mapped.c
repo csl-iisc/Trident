@@ -120,10 +120,11 @@ bool page_vma_mapped_walk(struct page_vma_mapped_walk *pvmw)
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
+	pud_t pude;
 	pmd_t pmde;
 
 	/* The only possible pmd mapping has been handled on last iteration */
-	if (pvmw->pmd && !pvmw->pte)
+	if ((pvmw->pud || pvmw->pmd) && !pvmw->pte)
 		return not_found(pvmw);
 
 	if (pvmw->pte)
@@ -150,8 +151,28 @@ restart:
 	if (!p4d_present(*p4d))
 		return false;
 	pud = pud_offset(p4d, pvmw->address);
+	pvmw->pud = pud_offset(p4d, pvmw->address);
 	if (!pud_present(*pud))
 		return false;
+	pude = READ_ONCE(*pud);
+        if (pud_trans_huge(pude)) {
+                pvmw->ptl = pud_lock(mm, pud);
+                if (likely(pud_trans_huge(*pud))) {
+                        if (pvmw->flags & PVMW_MIGRATION)
+                                return not_found(pvmw);
+                        if (pud_page(*pud) != page)
+                                return not_found(pvmw);
+                        return true;
+                } else if (!pud_present(*pud)) {
+                        return not_found(pvmw);
+                } else {
+                        /* THP pmd was split under us: handle on pte level */
+                        spin_unlock(pvmw->ptl);
+                        pvmw->ptl = NULL;
+                }
+        } else if (!pud_present(pude)) {
+                return false;
+        }
 	pvmw->pmd = pmd_offset(pud, pvmw->address);
 	/*
 	 * Make sure the pmd value isn't cached in a register by the

@@ -724,6 +724,7 @@ pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address)
 		goto out;
 
 	pud = pud_offset(p4d, address);
+	/* Even if it is a 1GB page, then also we must skip it's scanning. */
 	if (!pud_present(*pud) || pud_trans_huge(*pud))
 		goto out;
 
@@ -739,6 +740,42 @@ pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address)
 		pmd = NULL;
 out:
 	return pmd;
+}
+
+pud_t *mm_find_pud(struct mm_struct *mm, unsigned long address)
+{
+       pgd_t *pgd;
+       p4d_t *p4d;
+       pud_t *pud = NULL;
+       //pmd_t *pmd = NULL;
+       pud_t pude;
+
+       pgd = pgd_offset(mm, address);
+       if (!pgd_present(*pgd))
+               goto out;
+
+       p4d = p4d_offset(pgd, address);
+       if (!p4d_present(*p4d))
+               goto out;
+
+       pud = pud_offset(p4d, address);
+       //if (!pud_present(*pud))
+       //      goto out;
+       pude = *pud;
+
+
+       //pmd = pmd_offset(pud, address);
+       /*
+        * Some THP functions use the sequence pmdp_huge_clear_flush(), set_pmd_at()
+        * without holding anon_vma lock for write.  So when looking for a
+        * genuine pmde (in which to find pte), test present and !THP together.
+        */
+       //pmde = *pmd;
+       barrier();
+       if (!pud_present(pude) || pud_trans_huge(pude))
+               pud = NULL;
+out:
+       return pud;
 }
 
 struct page_referenced_arg {
@@ -785,8 +822,8 @@ static bool page_referenced_one(struct page *page, struct vm_area_struct *vma,
 					referenced++;
 			}
 		} else if (IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE)) {
-			if (pmdp_clear_flush_young_notify(vma, address,
-						pvmw.pmd))
+			if ((pvmw.pmd && (pmdp_clear_flush_young_notify(vma, address,
+                                               pvmw.pmd))) || (pvmw.pud && (pudp_clear_flush_young_notify(vma, address, pvmw.pud))))
 				referenced++;
 		} else {
 			/* unexpected pmd-mapped page? */
@@ -1017,9 +1054,9 @@ void page_move_anon_rmap(struct page *page, struct vm_area_struct *vma)
 
 /**
  * __page_set_anon_rmap - set up new anonymous rmap
- * @page:	Page to add to rmap	
+ * @page:	Page to add to rmap
  * @vma:	VM area to add page to.
- * @address:	User virtual address of the mapping	
+ * @address:	User virtual address of the mapping
  * @exclusive:	the page is exclusively owned by the current process
  */
 static void __page_set_anon_rmap(struct page *page,
@@ -1251,7 +1288,7 @@ out:
 
 static void page_remove_anon_compound_rmap(struct page *page)
 {
-	int i, nr;
+	int i, nr_pages, nr;
 
 	if (!atomic_add_negative(-1, compound_mapcount_ptr(page)))
 		return;
@@ -1268,24 +1305,20 @@ static void page_remove_anon_compound_rmap(struct page *page)
 	if (TestClearPageDoubleMap(page)) {
 		/*
 		 * Subpages can be mapped with PTEs too. Check how many of
-		 * themi are still mapped.
+		 * them are still mapped.
 		 */
-		for (i = 0, nr = 0; i < HPAGE_PMD_NR; i++) {
+		nr_pages = (page[1].compound_order == 18) ? HPAGE_PUD_NR : HPAGE_PMD_NR;
+		for (i = 0, nr = 0; i < nr_pages; i++) {
 			if (atomic_add_negative(-1, &page[i]._mapcount))
 				nr++;
 		}
 	} else {
-		nr = HPAGE_PMD_NR;
+		nr = (page[1].compound_order == 18) ? HPAGE_PUD_NR : HPAGE_PMD_NR;
 	}
 
 	if (unlikely(PageMlocked(page)))
 		clear_page_mlock(page);
 
-	if (PageCompound(page) && page[1].compound_dtor == 18) {
-		/* Defer split 1GB anonymous pages. */
-    deferred_split_huge_page(page);
-		return;
-	}
 	if (nr) {
 		__mod_node_page_state(page_pgdat(page), NR_ANON_MAPPED, -nr);
 		deferred_split_huge_page(page);
