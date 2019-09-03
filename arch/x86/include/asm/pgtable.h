@@ -1106,7 +1106,8 @@ extern int pudp_test_and_clear_young(struct vm_area_struct *vma,
 #define __HAVE_ARCH_PMDP_CLEAR_YOUNG_FLUSH
 extern int pmdp_clear_flush_young(struct vm_area_struct *vma,
 				  unsigned long address, pmd_t *pmdp);
-
+extern int pudp_clear_flush_young(struct vm_area_struct *vma,
+                                  unsigned long address, pud_t *pudp);
 
 #define pmd_write pmd_write
 static inline int pmd_write(pmd_t pmd)

@@ -533,7 +533,7 @@ pmd_t maybe_pmd_mkwrite(pmd_t pmd, struct vm_area_struct *vma)
 }
 
 #ifdef CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE_PUD
-static pud_t maybe_pud_mkwrite(pud_t pud, struct vm_area_struct *vma)
+pud_t maybe_pud_mkwrite(pud_t pud, struct vm_area_struct *vma)
 {
   if (likely(vma->vm_flags & VM_WRITE))
     pud = pud_mkwrite(pud);
@@ -2212,7 +2212,7 @@ int zap_huge_pud(struct mmu_gather *tlb, struct vm_area_struct *vma,
         add_mm_counter(tlb->mm, MM_ANONPAGES, -HPAGE_PUD_NR);
       } else {
         /* Trident only supports anonymous 1GB pages */
-        BUG();
+        add_mm_counter(tlb->mm, MM_FILEPAGES, -HPAGE_PUD_NR);
       }
 
       spin_unlock(ptl);
@@ -2231,7 +2231,7 @@ static void __split_huge_pud_locked(struct vm_area_struct *vma, pud_t *pud,
   pgtable_t pgtable;
   pmd_t *pmdtable, *_pmd;
   pud_t old_pud, _pud;
-  bool young, write, soft_dirty, pud_migration = false;
+  bool young, write, soft_dirty;
   unsigned long addr;
   int i = 0, j = 0, num = 0;
 
