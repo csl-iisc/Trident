@@ -1888,6 +1888,12 @@ static struct page *pmd_to_page(pmd_t *pmd)
 	return virt_to_page((void *)((unsigned long) pmd & mask));
 }
 
+static struct page *pud_to_page(pud_t *pud)
+{
+	unsigned long mask = ~(PTRS_PER_PUD * sizeof(pud_t) - 1);
+	return virt_to_page((void *)((unsigned long) pud & mask));
+}
+
 static inline spinlock_t *pmd_lockptr(struct mm_struct *mm, pmd_t *pmd)
 {
 	return ptlock_ptr(pmd_to_page(pmd));
@@ -1940,7 +1946,8 @@ static inline spinlock_t *pmd_lock(struct mm_struct *mm, pmd_t *pmd)
  */
 static inline spinlock_t *pud_lockptr(struct mm_struct *mm, pud_t *pud)
 {
-	return &mm->page_table_lock;
+	//This is the time to change this lock and make it more scalable.
+	return ptlock_ptr(pud_to_page(pud));
 }
 
 static inline spinlock_t *pud_lock(struct mm_struct *mm, pud_t *pud)

@@ -26,6 +26,7 @@ static inline void huge_pud_set_accessed(struct vm_fault *vmf, pud_t orig_pud)
 #endif
 
 extern int do_huge_pmd_wp_page(struct vm_fault *vmf, pmd_t orig_pmd);
+extern int do_huge_pud_wp_page(struct vm_fault *vmf, pud_t orig_pud);
 extern struct page *follow_trans_huge_pmd(struct vm_area_struct *vma,
 					  unsigned long addr,
 					  pmd_t *pmd,
