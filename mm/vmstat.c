@@ -1260,6 +1260,8 @@ const char * const vmstat_text[] = {
   "thp_split_pud",
   "thhp_fault_alloc",
   "thhp_fault_fallback",
+  "thhp_collapse_alloc",
+  "thhp_collapse_alloc_failed",
   "thhp_deferred_split_page",
   "thhp_zero_page_alloc",
   "thhp_zero_page_alloc_failed", 
