@@ -59,6 +59,9 @@ unsigned long transparent_hugepage_flags __read_mostly =
 (1<<TRANSPARENT_HUGEPAGE_DEFRAG_KHUGEPAGED_FLAG)|
 (1<<TRANSPARENT_HUGEPAGE_USE_ZERO_PAGE_FLAG);
 
+unsigned long transparent_pud_enabled __read_mostly = 0;
+unsigned long transparent_pmd_enabled __read_mostly = 0;
+
 static struct shrinker deferred_split_shrinker;
 
 static atomic_t huge_zero_refcount;
@@ -196,6 +199,56 @@ static struct shrinker huge_zero_page_shrinker = {
 };
 
 #ifdef CONFIG_SYSFS
+static ssize_t enabled_pud_show(struct kobject *kobj,
+                           struct kobj_attribute *attr, char *buf)
+{
+       return sprintf(buf, "%ld\n", transparent_pud_enabled);
+}
+
+static ssize_t enabled_pud_store(struct kobject *kobj,
+                            struct kobj_attribute *attr,
+                            const char *buf, size_t count)
+{
+       ssize_t ret = count;
+        int err;
+        unsigned long enable;
+
+        err = kstrtoul(buf, 10, &enable);
+        if (err || enable > UINT_MAX)
+                return -EINVAL;
+
+        transparent_pud_enabled = enable;
+
+       return ret;
+}
+static struct kobj_attribute enabled_pud_attr =
+       __ATTR(enabled_pud, 0644, enabled_pud_show, enabled_pud_store);
+
+static ssize_t enabled_pmd_show(struct kobject *kobj,
+                           struct kobj_attribute *attr, char *buf)
+{
+       return sprintf(buf, "%ld\n", transparent_pmd_enabled);
+}
+
+static ssize_t enabled_pmd_store(struct kobject *kobj,
+                            struct kobj_attribute *attr,
+                            const char *buf, size_t count)
+{
+       ssize_t ret = count;
+        int err;
+        unsigned long enable;
+
+        err = kstrtoul(buf, 10, &enable);
+        if (err || enable > UINT_MAX)
+                return -EINVAL;
+
+        transparent_pmd_enabled = enable;
+
+       return ret;
+}
+static struct kobj_attribute enabled_pmd_attr =
+       __ATTR(enabled_pmd, 0644, enabled_pmd_show, enabled_pmd_store);
+
 static ssize_t enabled_show(struct kobject *kobj,
     struct kobj_attribute *attr, char *buf)
 {
@@ -370,6 +423,8 @@ static struct attribute *hugepage_attr[] = {
   &defrag_attr.attr,
   &use_zero_page_attr.attr,
   &hpage_pmd_size_attr.attr,
+  &enabled_pud_attr.attr,
+  &enabled_pmd_attr.attr,
 #if defined(CONFIG_SHMEM) && defined(CONFIG_TRANSPARENT_HUGE_PAGECACHE)
   &shmem_enabled_attr.attr,
 #endif
@@ -865,6 +920,8 @@ int do_huge_pmd_anonymous_page(struct vm_fault *vmf)
     return VM_FAULT_OOM;
   if (unlikely(khugepaged_enter(vma, vma->vm_flags)))
     return VM_FAULT_OOM;
+  if(!transparent_pmd_enabled)
+    return VM_FAULT_FALLBACK;
   if (!(vmf->flags & FAULT_FLAG_WRITE) &&
       !mm_forbids_zeropage(vma->vm_mm) &&
       transparent_hugepage_use_zero_page()) {
@@ -928,7 +985,8 @@ int do_huge_pud_anonymous_page(struct vm_fault *vmf)
 
   if (unlikely(khugepaged_enter(vma, vma->vm_flags)))
   	return VM_FAULT_OOM;
-
+  if(!transparent_pud_enabled)
+    return VM_FAULT_FALLBACK;
   if (!(vmf->flags & FAULT_FLAG_WRITE) &&
       !mm_forbids_zeropage(vma->vm_mm) &&
       transparent_hugepage_use_zero_onegb_page()) {
