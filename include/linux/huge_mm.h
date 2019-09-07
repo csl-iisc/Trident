@@ -53,6 +53,9 @@ extern bool move_huge_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 extern int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 			unsigned long addr, pgprot_t newprot,
 			int prot_numa);
+extern int change_huge_pud(struct vm_area_struct *vma, pud_t *pud,
+			unsigned long addr, pgprot_t newprot,
+			int prot_numa);
 int vmf_insert_pfn_pmd(struct vm_area_struct *vma, unsigned long addr,
 			pmd_t *pmd, pfn_t pfn, bool write);
 int vmf_insert_pfn_pud(struct vm_area_struct *vma, unsigned long addr,

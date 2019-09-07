@@ -227,17 +227,53 @@ static inline unsigned long change_pud_range(struct vm_area_struct *vma,
 		pgprot_t newprot, int dirty_accountable, int prot_numa)
 {
 	pud_t *pud;
+	struct mm_struct *mm = vma->vm_mm;
 	unsigned long next;
 	unsigned long pages = 0;
+	unsigned long mni_start = 0;
 
 	pud = pud_offset(p4d, addr);
 	do {
+		unsigned long this_pages;
+
 		next = pud_addr_end(addr, end);
-		if (pud_none_or_clear_bad(pud))
-			continue;
-		pages += change_pmd_range(vma, pud, addr, next, newprot,
+		if (!pud_trans_huge(*pud) && !pud_devmap(*pud)
+				&& pud_none_or_clear_bad(pud))
+			goto next;
+
+		/* invoke the mmu notifier if the pud is populated */
+		if (!mni_start) {
+			mni_start = addr;
+			mmu_notifier_invalidate_range_start(mm, mni_start, end);
+		}
+
+		if (pud_trans_huge(*pud) || pud_devmap(*pud)) {
+			if (next - addr != HPAGE_PUD_SIZE)
+				__split_huge_pud(vma, pud, addr);
+			else {
+				int nr_pmds = change_huge_pud(vma, pud, addr,
+						newprot, prot_numa);
+
+				if (nr_pmds) {
+					if (nr_pmds == HPAGE_PUD_NR) {
+						pages += HPAGE_PUD_NR;
+					}
+
+					/* huge pud was handled */
+					goto next;
+				}
+			}
+			/* fall through, the trans huge pud just split */
+		}
+		this_pages = change_pmd_range(vma, pud, addr, next, newprot,
 				 dirty_accountable, prot_numa);
+		pages += this_pages;
+next:
+		cond_resched();
 	} while (pud++, addr = next, addr != end);
+
+	if (mni_start)
+		mmu_notifier_invalidate_range_end(mm, mni_start, end);
 
 	return pages;
 }
