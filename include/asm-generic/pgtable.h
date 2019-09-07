@@ -250,6 +250,18 @@ static inline void ptep_set_wrprotect(struct mm_struct *mm, unsigned long addres
 #define pmd_clear_savedwrite pmd_wrprotect
 #endif
 
+#ifndef pud_savedwrite
+#define pud_savedwrite pud_write
+#endif
+
+#ifndef pud_mk_savedwrite
+#define pud_mk_savedwrite pud_mkwrite
+#endif
+
+#ifndef pud_clear_savedwrite
+#define pud_clear_savedwrite pud_wrprotect
+#endif
+
 #ifndef __HAVE_ARCH_PMDP_SET_WRPROTECT
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 static inline void pmdp_set_wrprotect(struct mm_struct *mm,

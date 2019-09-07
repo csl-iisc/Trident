@@ -926,9 +926,8 @@ int do_huge_pud_anonymous_page(struct vm_fault *vmf)
   if (unlikely(anon_vma_prepare(vma)))
     return VM_FAULT_OOM;
 
-  /* We are not concerned about khugepaged as of now */
-  //if (unlikely(khugepaged_enter(vma, vma->vm_flags)))
-  //	return VM_FAULT_OOM;
+  if (unlikely(khugepaged_enter(vma, vma->vm_flags)))
+  	return VM_FAULT_OOM;
 
   if (!(vmf->flags & FAULT_FLAG_WRITE) &&
       !mm_forbids_zeropage(vma->vm_mm) &&
@@ -2340,6 +2339,73 @@ bool move_huge_pmd(struct vm_area_struct *vma, unsigned long old_addr,
     return true;
   }
   return false;
+}
+
+/*
+ * Returns
+ *  - 0 if PUD could not be locked
+ *  - 1 if PUD was locked but protections unchange and TLB flush unnecessary
+ *  - HPAGE_PUD_NR is protections changed and TLB flush necessary
+ */
+int change_huge_pud(struct vm_area_struct *vma, pud_t *pud,
+		unsigned long addr, pgprot_t newprot, int prot_numa)
+{
+	struct mm_struct *mm = vma->vm_mm;
+	spinlock_t *ptl;
+	pud_t entry;
+	bool preserve_write;
+	int ret;
+
+	ptl = __pud_trans_huge_lock(pud, vma);
+	if (!ptl)
+		return 0;
+
+	preserve_write = prot_numa && pud_write(*pud);
+	ret = 1;
+
+	/*
+	 * Avoid trapping faults against the zero page. The read-only
+	 * data is likely to be read-cached on the local CPU and
+	 * local/remote hits to the zero page are not interesting.
+	 */
+	if (prot_numa && is_huge_zero_pud(*pud))
+		goto unlock;
+
+	if (prot_numa && pud_protnone(*pud))
+		goto unlock;
+
+	/*
+	 * In case prot_numa, we are under down_read(mmap_sem). It's critical
+	 * to not clear pmd intermittently to avoid race with MADV_DONTNEED
+	 * which is also under down_read(mmap_sem):
+	 *
+	 *	CPU0:				CPU1:
+	 *				change_huge_pmd(prot_numa=1)
+	 *				 pmdp_huge_get_and_clear_notify()
+	 * madvise_dontneed()
+	 *  zap_pmd_range()
+	 *   pmd_trans_huge(*pmd) == 0 (without ptl)
+	 *   // skip the pmd
+	 *				 set_pmd_at();
+	 *				 // pmd is re-established
+	 *
+	 * The race makes MADV_DONTNEED miss the huge pmd and don't clear it
+	 * which may break userspace.
+	 *
+	 * pmdp_invalidate() is required to make sure we don't miss
+	 * dirty/young flags set by hardware.
+	 */
+	entry = pudp_invalidate(vma, addr, pud);
+
+	entry = pud_modify(entry, newprot);
+	if (preserve_write)
+		entry = pud_mk_savedwrite(entry);
+	ret = HPAGE_PUD_NR;
+	set_pud_at(mm, addr, pud, entry);
+	BUG_ON(vma_is_anonymous(vma) && !preserve_write && pud_write(entry));
+unlock:
+	spin_unlock(ptl);
+	return ret;
 }
 
 /*
