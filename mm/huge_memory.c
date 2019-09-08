@@ -798,7 +798,8 @@ static int __do_huge_pud_anonymous_page(struct vm_fault *vmf, struct page *page,
     count_vm_event(THHP_FAULT_FALLBACK);
     return VM_FAULT_FALLBACK;
   }
-  clear_huge_page(page, vmf->address, HPAGE_PUD_NR);
+  if(!PageZeroed(page))
+    clear_huge_page(page, vmf->address, HPAGE_PUD_NR);
   /*
    * The memory barrier inside __SetPageUptodate makes sure that
    * clear_huge_page writes become visible before the set_pud_at()

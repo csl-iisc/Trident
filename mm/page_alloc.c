@@ -844,6 +844,7 @@ continue_merging:
 	}
 
 done_merging:
+  ClearPageZeroed(page);
 	set_page_order(page, order);
 
 	/*
@@ -868,7 +869,10 @@ done_merging:
 		}
 	}
 
-	list_add(&page->lru, &zone->free_area[order].free_list[migratetype]);
+  if(order != 18)
+    list_add(&page->lru, &zone->free_area[order].free_list[migratetype]);
+  else
+    list_add_tail(&page->lru, &zone->free_area[order].free_list[migratetype]);
 out:
 	zone->free_area[order].nr_free++;
 }
@@ -1916,7 +1920,7 @@ static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags
 
 	post_alloc_hook(page, order, gfp_flags);
 
-	if (!free_pages_prezeroed() && (gfp_flags & __GFP_ZERO))
+	if (!free_pages_prezeroed() && (gfp_flags & __GFP_ZERO) && !PageZeroed(page))
 		for (i = 0; i < (1 << order); i++)
 			clear_highpage(page + i);
 
@@ -2765,6 +2769,7 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
 	}
 
 	pcp = &this_cpu_ptr(zone->pageset)->pcp;
+  ClearPageZeroed(page);
 	list_add(&page->lru, &pcp->lists[migratetype]);
 	pcp->count++;
 	if (pcp->count >= pcp->high) {
