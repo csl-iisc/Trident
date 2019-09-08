@@ -90,6 +90,7 @@ static inline void pmd_populate(struct mm_struct *mm, pmd_t *pmd,
 }
 
 #define pmd_pgtable(pmd) pmd_page(pmd)
+#define pud_pmdtable(pud) pud_page(pud)
 
 #if CONFIG_PGTABLE_LEVELS > 2
 static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)

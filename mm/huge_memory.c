@@ -1321,7 +1321,7 @@ int copy_huge_pud(struct mm_struct *dst_mm, struct mm_struct *src_mm,
      *                * reference.
      *                     */
     zero_page = mm_get_huge_zero_onegb_page(dst_mm);
-    set_huge_zero_onegb_page(pgtable, dst_mm, vma, addr, dst_pud,
+    set_huge_zero_onegb_page(dst_mm, vma, addr, dst_pud,
         zero_page);
     ret = 0;
     goto out_unlock;
@@ -1933,6 +1933,16 @@ static inline bool can_follow_write_pmd(pmd_t pmd, unsigned int flags)
     ((flags & FOLL_FORCE) && (flags & FOLL_COW) && pmd_dirty(pmd));
 }
 
+/*
+ *  * FOLL_FORCE can write to even unwritable pud's, but only
+ *   * after we've gone through a COW cycle and they are dirty.
+ *    */
+static inline bool can_follow_write_pud(pud_t pud, unsigned int flags)
+{
+    return pud_write(pud) ||
+               ((flags & FOLL_FORCE) && (flags & FOLL_COW) && pud_dirty(pud));
+}
+
 struct page *follow_trans_huge_pmd(struct vm_area_struct *vma,
     unsigned long addr,
     pmd_t *pmd,
@@ -2011,15 +2021,39 @@ struct page *follow_trans_huge_pud(struct vm_area_struct *vma,
   struct page *page = NULL;
 
   assert_spin_locked(pud_lockptr(mm, pud));
+
+  if (flags & FOLL_WRITE && !can_follow_write_pud(*pud, flags))
+    goto out;
   /* Avoid dumping huge zero page */
   if ((flags & FOLL_DUMP) && is_huge_zero_pud(*pud))
     return ERR_PTR(-EFAULT);
+  /* Full NUMA hinting faults to serialise migration in fault paths */
+  if ((flags & FOLL_NUMA) && pud_protnone(*pud))
+    goto out;
 
   page = pud_page(*pud);
   VM_BUG_ON_PAGE(!PageHead(page) && !is_zone_device_page(page), page);
-  page += (addr & ~HPAGE_PUD_MASK) >> PAGE_SHIFT;
-  VM_BUG_ON_PAGE(!PageCompound(page) && !is_zone_device_page(page), page);
-  return page;
+	if (flags & FOLL_TOUCH)
+		touch_pud(vma, addr, pud, flags);
+	if ((flags & FOLL_MLOCK) && (vma->vm_flags & VM_LOCKED)) {
+		if (PageAnon(page) && compound_mapcount(page) != 1)
+			goto skip_mlock;
+		if (PageDoubleMap(page) || !page->mapping)
+			goto skip_mlock;
+		if (!trylock_page(page))
+			goto skip_mlock;
+		lru_add_drain();
+		if (page->mapping && !PageDoubleMap(page))
+			mlock_vma_page(page);
+		unlock_page(page);
+	}
+skip_mlock:
+	page += (addr & ~HPAGE_PUD_MASK) >> PAGE_SHIFT;
+	VM_BUG_ON_PAGE(!PageCompound(page) && !is_zone_device_page(page), page);
+	if (flags & FOLL_GET)
+		get_page(page);
+out:
+	return page;
 }
 
 /* NUMA hinting page fault entry point for trans huge pmds */
@@ -2646,6 +2680,43 @@ int zap_huge_pud(struct mmu_gather *tlb, struct vm_area_struct *vma,
   return 1;
 }
 
+static void __split_huge_zero_page_pud(struct vm_area_struct *vma,
+    unsigned long haddr, pud_t *pud)
+{
+  struct mm_struct *mm = vma->vm_mm;
+  pgtable_t pgtable;
+  pmd_t *pmdtable, *_pmd;
+  pud_t _pud;
+  unsigned long addr;
+  int i = 0, j = 0;
+
+  pudp_huge_clear_flush(vma, haddr, pud);
+
+  pmdtable = pmd_alloc_one(mm, haddr);
+  if(pmdtable)
+    mm_inc_nr_pmds(mm);
+  pud_populate(mm, &_pud, pmdtable);
+
+  for(j = 0, addr = haddr; j < HPAGE_PMD_NR; j++){
+    _pmd = pmd_offset(&_pud, addr);
+    pgtable = pte_alloc_one(mm, addr);
+    if(pgtable)
+      mm_inc_nr_ptes(mm);
+    pmd_populate(mm, _pmd, pgtable);
+    for (i = 0; i < HPAGE_PMD_NR; i++, addr += PAGE_SIZE) {
+      pte_t *pte, entry;
+      entry = pfn_pte(my_zero_pfn(addr), vma->vm_page_prot);
+      entry = pte_mkspecial(entry);
+      pte = pte_offset_map(_pmd, addr);
+      VM_BUG_ON(!pte_none(*pte));
+      set_pte_at(mm, addr, pte, entry);
+      pte_unmap(pte);
+    }
+  }
+  smp_wmb(); /* make pte visible before pud */
+  pud_populate(mm, pud, pmdtable);
+}
+
 static void __split_huge_pud_locked(struct vm_area_struct *vma, pud_t *pud,
     unsigned long haddr)
 {
@@ -2803,43 +2874,6 @@ static void __split_huge_zero_page_pmd(struct vm_area_struct *vma,
   }
   smp_wmb(); /* make pte visible before pmd */
   pmd_populate(mm, pmd, pgtable);
-}
-
-static void __split_huge_zero_page_pud(struct vm_area_struct *vma,
-    unsigned long haddr, pud_t *pud)
-{
-  struct mm_struct *mm = vma->vm_mm;
-  pgtable_t pgtable;
-  pmd_t *pmdtable, *_pmd;
-  pud_t _pud;
-  unsigned long addr;
-  int i = 0, j = 0;
-
-  pudp_huge_clear_flush(vma, haddr, pud);
-
-  pmdtable = pmd_alloc_one(mm, haddr);
-  if(pmdtable)
-    mm_inc_nr_pmds(mm);
-  pud_populate(mm, &_pud, pmdtable);
-
-  for(j = 0, addr = haddr; j < HPAGE_PMD_NR; j++){
-    _pmd = pmd_offset(&_pud, addr);
-    pgtable = pte_alloc_one(mm, addr);
-    if(pgtable)
-      mm_inc_nr_ptes(mm);
-    pmd_populate(mm, _pmd, pgtable);
-    for (i = 0; i < HPAGE_PMD_NR; i++, addr += PAGE_SIZE) {
-      pte_t *pte, entry;
-      entry = pfn_pte(my_zero_pfn(addr), vma->vm_page_prot);
-      entry = pte_mkspecial(entry);
-      pte = pte_offset_map(&_pmd, addr);
-      VM_BUG_ON(!pte_none(*pte));
-      set_pte_at(mm, addr, pte, entry);
-      pte_unmap(pte);
-    }
-  }
-  smp_wmb(); /* make pte visible before pud */
-  pud_populate(mm, pud, pmdtable);
 }
 
 static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
