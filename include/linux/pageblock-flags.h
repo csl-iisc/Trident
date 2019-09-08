@@ -49,7 +49,8 @@ extern unsigned int pageblock_order;
 #else /* CONFIG_HUGETLB_PAGE_SIZE_VARIABLE */
 
 /* Huge pages are a constant size */
-#define pageblock_order		HUGETLB_PAGE_ORDER
+/* Set the pageblock size to order 18(1GB page) in Trident. */
+#define pageblock_order	18	
 
 #endif /* CONFIG_HUGETLB_PAGE_SIZE_VARIABLE */
 

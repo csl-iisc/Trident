@@ -811,6 +811,7 @@ continue_merging:
 		} else {
 			list_del(&buddy->lru);
 			zone->free_area[order].nr_free--;
+			zone->pageblock_freepages[((buddy_pfn - zone->zone_start_pfn) >> pageblock_order)] -= (1 << order);
 			rmv_page_order(buddy);
 		}
 		combined_pfn = buddy_pfn & pfn;
@@ -871,6 +872,7 @@ done_merging:
 	list_add(&page->lru, &zone->free_area[order].free_list[migratetype]);
 out:
 	zone->free_area[order].nr_free++;
+	zone->pageblock_freepages[((pfn - zone->zone_start_pfn) >> pageblock_order)] += (1 << order);
 }
 
 /*
@@ -1791,7 +1793,7 @@ static inline void expand(struct zone *zone, struct page *page,
 	int low, int high, struct free_area *area,
 	int migratetype)
 {
-	unsigned long size = 1 << high;
+	unsigned long size = 1 << high, pfn;
 
 	while (high > low) {
 		area--;
@@ -1810,6 +1812,8 @@ static inline void expand(struct zone *zone, struct page *page,
 
 		list_add(&page[size].lru, &area->free_list[migratetype]);
 		area->nr_free++;
+		pfn = page_to_pfn(page);
+		zone->pageblock_freepages[((pfn - zone->zone_start_pfn) >> pageblock_order)] += (1 << high);
 		set_page_order(&page[size], high);
 	}
 }
@@ -1946,6 +1950,7 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 	unsigned int current_order;
 	struct free_area *area;
 	struct page *page;
+	unsigned long pfn;
 
 	/* Find a page of the appropriate size in the preferred list */
 	for (current_order = order; current_order < MAX_ORDER; ++current_order) {
@@ -1957,6 +1962,8 @@ struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
 		list_del(&page->lru);
 		rmv_page_order(page);
 		area->nr_free--;
+		pfn = page_to_pfn(page);
+		zone->pageblock_freepages[((pfn - zone->zone_start_pfn) >> pageblock_order)] -= (1 << current_order);
 		expand(zone, page, order, current_order, area, migratetype);
 		set_pcppage_migratetype(page, migratetype);
 		return page;
@@ -2853,6 +2860,7 @@ int __isolate_free_page(struct page *page, unsigned int order)
 	unsigned long watermark;
 	struct zone *zone;
 	int mt;
+	unsigned long pfn;
 
 	BUG_ON(!PageBuddy(page));
 
@@ -2876,6 +2884,8 @@ int __isolate_free_page(struct page *page, unsigned int order)
 	/* Remove page from free list */
 	list_del(&page->lru);
 	zone->free_area[order].nr_free--;
+	pfn = page_to_pfn(page);
+	zone->pageblock_freepages[((pfn - zone->zone_start_pfn) >> pageblock_order)] -= (1 << order);
 	rmv_page_order(page);
 
 	/*
@@ -6130,8 +6140,34 @@ static void __init setup_usemap(struct pglist_data *pgdat,
 							 pgdat->node_id);
 }
 #else
+
+/*
+ * Start by making sure zonesize is a multiple of pageblock_order by rounding
+ * up.
+ */
+static unsigned long __init pageblock_array_size(unsigned long zone_start_pfn, unsigned long zonesize)
+{
+	unsigned long usemapsize;
+
+	zonesize += zone_start_pfn & (pageblock_nr_pages-1);
+	usemapsize = roundup(zonesize, pageblock_nr_pages);
+	usemapsize = usemapsize >> pageblock_order;
+	//This essentially gives the number of pageblocks for this zone.
+	return usemapsize * sizeof(unsigned long);
+}
+
 static inline void setup_usemap(struct pglist_data *pgdat, struct zone *zone,
-				unsigned long zone_start_pfn, unsigned long zonesize) {}
+				unsigned long zone_start_pfn, unsigned long zonesize)
+
+{
+        unsigned long pb_array_size = pageblock_array_size(zone_start_pfn, zonesize);
+        zone->pageblock_freepages = NULL;
+
+	if (pb_array_size)
+                zone->pageblock_freepages =
+                        memblock_virt_alloc_node_nopanic(pb_array_size,
+                                                         pgdat->node_id);
+}
 #endif /* CONFIG_SPARSEMEM */
 
 #ifdef CONFIG_HUGETLB_PAGE_SIZE_VARIABLE
@@ -8015,6 +8051,7 @@ __offline_isolated_pages(unsigned long start_pfn, unsigned long end_pfn)
 		list_del(&page->lru);
 		rmv_page_order(page);
 		zone->free_area[order].nr_free--;
+		zone->pageblock_freepages[((pfn - zone->zone_start_pfn) >> pageblock_order)] -= (1 << order);
 		for (i = 0; i < (1 << order); i++)
 			SetPageReserved((page+i));
 		pfn += (1 << order);
