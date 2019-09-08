@@ -333,6 +333,15 @@ static struct page *follow_pud_mask(struct vm_area_struct *vma,
 		if (page)
 			return page;
 	}
+	if(pud_trans_huge(*pud)){
+		ptl = pud_lock(mm, pud);
+		page = follow_trans_huge_pud(vma, address, pud, flags);
+		spin_unlock(ptl);
+		if(page){
+			*page_mask = HPAGE_PUD_NR - 1;
+			return page;
+		}
+	}
 	if (unlikely(pud_bad(*pud)))
 		return no_page_table(vma, flags);
 

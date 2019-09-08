@@ -727,6 +727,13 @@ static inline int pmd_protnone(pmd_t pmd)
 	return (pmd_flags(pmd) & (_PAGE_PROTNONE | _PAGE_PRESENT))
 		== _PAGE_PROTNONE;
 }
+
+static inline int pud_protnone(pud_t pud)
+{
+	return (pud_flags(pud) & (_PAGE_PROTNONE | _PAGE_PRESENT))
+		== _PAGE_PROTNONE;
+}
+
 #endif /* CONFIG_NUMA_BALANCING */
 
 static inline int pmd_none(pmd_t pmd)
