@@ -12,12 +12,40 @@
  * Zero a page.
  * %rdi	- page
  */
+
+/*  To remove non temporal page zeroing, uncomment this block.   */
+/*------------------------Default logic for copying--------------*/
+/*
 ENTRY(clear_page_rep)
 	movl $4096/8,%ecx
 	xorl %eax,%eax
 	rep stosq
 	ret
 ENDPROC(clear_page_rep)
+*/
+/*---------------------------------------------------------------*/
+
+/*-------Modified logic for copying using non temporal writes----*/
+ENTRY(clear_page_rep)
+       xorq    %rax, %rax
+       movl    $4096/64, %ecx
+       .p2align 4
+1:
+       decl    %ecx
+       movnti  %rax,(%rdi)
+       movnti  %rax,0x8(%rdi)
+       movnti  %rax,0x10(%rdi)
+       movnti  %rax,0x18(%rdi)
+       movnti  %rax,0x20(%rdi)
+       movnti  %rax,0x28(%rdi)
+       movnti  %rax,0x30(%rdi)
+       movnti  %rax,0x38(%rdi)
+       leaq    64(%rdi),%rdi
+       jnz     1b
+       nop
+       ret
+ENDPROC(clear_page_rep)
+/*---------------------------------------------------------------*/
 EXPORT_SYMBOL_GPL(clear_page_rep)
 
 ENTRY(clear_page_orig)
