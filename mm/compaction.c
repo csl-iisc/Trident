@@ -166,7 +166,8 @@ bool compaction_deferred(struct zone *zone, int order)
 
 	if (zone->compact_considered >= defer_limit)
 		return false;
-
+  if(order == 18)
+	  return false;
 	trace_mm_compaction_deferred(zone, order);
 
 	return true;
@@ -1497,7 +1498,8 @@ enum compact_result compaction_suitable(struct zone *zone, int order,
 	trace_mm_compaction_suitable(zone, order, ret);
 	if (ret == COMPACT_NOT_SUITABLE_ZONE)
 		ret = COMPACT_SKIPPED;
-
+  if(order == 18)
+	  return COMPACT_CONTINUE;
 	return ret;
 }
 
@@ -1554,7 +1556,7 @@ static enum compact_result compact_zone(struct zone *zone, struct compact_contro
 	 * Clear pageblock skip if there were failures recently and compaction
 	 * is about to be retried after being deferred.
 	 */
-	if (compaction_restarting(zone, cc->order))
+	if (order != 18 && compaction_restarting(zone, cc->order))
 		__reset_isolation_suitable(zone);
 
 	/*
@@ -1715,7 +1717,7 @@ static enum compact_result compact_zone_order(struct zone *zone, int order,
 		.alloc_flags = alloc_flags,
 		.classzone_idx = classzone_idx,
 		.direct_compaction = true,
-		.whole_zone = (prio == MIN_COMPACT_PRIORITY),
+		.whole_zone = ((order == 18) ? true : (prio == MIN_COMPACT_PRIORITY)),
 		.ignore_skip_hint = (prio == MIN_COMPACT_PRIORITY),
 		.ignore_block_suitable = (prio == MIN_COMPACT_PRIORITY)
 	};
