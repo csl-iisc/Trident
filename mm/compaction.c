@@ -2014,7 +2014,8 @@ static enum compact_result compact_zone(struct zone *zone, struct compact_contro
   while ((ret = compact_finished(zone, cc)) == COMPACT_CONTINUE) {
     int err;
     count_iter++;
-    if(cc->order == 18 && count_iter > 20){
+    if(count_iter > sysctl_smart_compaction_retries &&
+        sysctl_compaction_smart && cc->order == 18){
       ret = COMPACT_CONTENDED;
       cc->nr_migratepages = 0;
       goto out;
@@ -2300,6 +2301,7 @@ static void compact_nodes(void)
 /* The written value is actually unused, all memory is compacted */
 int sysctl_compact_memory;
 int sysctl_compaction_smart __read_mostly = 0;
+int sysctl_smart_compaction_retries __read_mostly = 5;
 
 /*
  * This is the entry point for compacting all nodes via
