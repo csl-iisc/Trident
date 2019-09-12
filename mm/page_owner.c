@@ -26,7 +26,7 @@ struct page_owner {
 	depot_stack_handle_t handle;
 };
 
-static bool page_owner_disabled = true;
+static bool page_owner_disabled = false;
 DEFINE_STATIC_KEY_FALSE(page_owner_inited);
 
 static depot_stack_handle_t dummy_handle;
@@ -111,13 +111,25 @@ void __reset_page_owner(struct page *page, unsigned int order)
 {
 	int i;
 	struct page_ext *page_ext;
+	unsigned long pfn;
+        struct zone *zone;
+        int page_mt;
+        struct page_owner *page_owner;
 
+	pfn = page_to_pfn(page);
+        zone = page_zone(page);
+	page_ext = lookup_page_ext(page);
+        page_owner = get_page_owner(page_ext);
+        page_mt = gfpflags_to_migratetype(page_owner->gfp_mask);
+        if (page_mt == MIGRATE_UNMOVABLE || page_mt == MIGRATE_RECLAIMABLE)
+          zone->pageblock_unmovablepages[((pfn - zone->zone_start_pfn) >> pageblock_order)] -= (1 << order);
 	for (i = 0; i < (1 << order); i++) {
 		page_ext = lookup_page_ext(page + i);
 		if (unlikely(!page_ext))
 			continue;
 		__clear_bit(PAGE_EXT_OWNER, &page_ext->flags);
 	}
+
 }
 
 static inline bool check_recursive_alloc(struct stack_trace *trace,
@@ -187,6 +199,10 @@ noinline void __set_page_owner(struct page *page, unsigned int order,
 					gfp_t gfp_mask)
 {
 	struct page_ext *page_ext = lookup_page_ext(page);
+	unsigned long pfn;
+	struct zone *zone;
+	int page_mt;
+	struct page_owner *page_owner;
 	depot_stack_handle_t handle;
 
 	if (unlikely(!page_ext))
@@ -194,6 +210,12 @@ noinline void __set_page_owner(struct page *page, unsigned int order,
 
 	handle = save_stack(gfp_mask);
 	__set_page_owner_handle(page_ext, handle, order, gfp_mask);
+	pfn = page_to_pfn(page);
+	zone = page_zone(page);
+	page_owner = get_page_owner(page_ext);
+	page_mt = gfpflags_to_migratetype(page_owner->gfp_mask);
+	if (page_mt == MIGRATE_UNMOVABLE || page_mt == MIGRATE_RECLAIMABLE)
+		zone->pageblock_unmovablepages[((pfn - zone->zone_start_pfn) >> pageblock_order)] += (1 << order);
 }
 
 void __set_page_owner_migrate_reason(struct page *page, int reason)

@@ -397,6 +397,10 @@ struct zone {
    * thread. We track this per pageblock.
    */
   unsigned long   *pageblock_access_ts;
+  /* To maintain a count of number of unmovable pages in a pageblock_nr_pages
+   * block(1GB page).
+   */
+  unsigned long   *pageblock_unmovablepages;
 
 	/* zone_start_pfn == zone_start_paddr >> PAGE_SHIFT */
 	unsigned long		zone_start_pfn;

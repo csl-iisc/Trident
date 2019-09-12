@@ -6199,6 +6199,9 @@ static inline void setup_usemap(struct pglist_data *pgdat, struct zone *zone,
                 zone->pageblock_access_ts =
                         memblock_virt_alloc_node_nopanic(pb_array_size,
                                                          pgdat->node_id);
+                zone->pageblock_unmovablepages =
+                        memblock_virt_alloc_node_nopanic(pb_array_size,
+                                                         pgdat->node_id);
   }
 }
 #endif /* CONFIG_SPARSEMEM */
