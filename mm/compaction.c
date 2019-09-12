@@ -2038,9 +2038,14 @@ static enum compact_result compact_zone(struct zone *zone, struct compact_contro
       case ISOLATE_SUCCESS:
         ;
     }
-    err = migrate_pages(&cc->migratepages, compaction_alloc,
-        compaction_free, (unsigned long)cc, cc->mode,
-        MR_COMPACTION);
+		if(cc->order != 18 || (!sysctl_compaction_smart))
+      err = migrate_pages(&cc->migratepages, compaction_alloc,
+          compaction_free, (unsigned long)cc, cc->mode,
+          MR_COMPACTION);
+    else
+      err = migrate_pages_pud(&cc->migratepages, compaction_alloc,
+          compaction_free, (unsigned long)cc, cc->mode,
+          MR_COMPACTION);
 
     trace_mm_compaction_migratepages(cc->nr_migratepages, err,
         &cc->migratepages);
@@ -2271,6 +2276,7 @@ static void compact_node(int nid)
     cc.zone = zone;
     INIT_LIST_HEAD(&cc.freepages);
     INIT_LIST_HEAD(&cc.migratepages);
+		INIT_LIST_HEAD(&cc.src_freepages);
 
     compact_zone(zone, &cc);
 
@@ -2411,6 +2417,7 @@ static void kcompactd_do_work(pg_data_t *pgdat)
     cc.zone = zone;
     INIT_LIST_HEAD(&cc.freepages);
     INIT_LIST_HEAD(&cc.migratepages);
+		INIT_LIST_HEAD(&cc.src_freepages);
 
     if (kthread_should_stop())
       return;
