@@ -1488,7 +1488,7 @@ static void isolate_freepages_pud(struct compact_control *cc)
 }
 
 static void isolate_freepages_wrapper(struct compact_control *cc){
-  if(cc->order == 18)
+  if(cc->order == 18 && sysctl_compaction_smart)
     isolate_freepages_pud(cc);
   else
     isolate_freepages(cc);
@@ -1720,7 +1720,7 @@ static isolate_migrate_t isolate_migratepages_pud(struct zone *zone,
 }
 
 static isolate_migrate_t isolate_migratepages_wrapper(struct zone *zone, struct compact_control *cc){
-  if(cc->order == 18)
+  if(cc->order == 18 && sysctl_compaction_smart)
     return isolate_migratepages_pud(zone, cc);
   else
     return isolate_migratepages(zone, cc);
@@ -2299,6 +2299,7 @@ static void compact_nodes(void)
 
 /* The written value is actually unused, all memory is compacted */
 int sysctl_compact_memory;
+int sysctl_compaction_smart __read_mostly = 0;
 
 /*
  * This is the entry point for compacting all nodes via
