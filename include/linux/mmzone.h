@@ -393,6 +393,10 @@ struct zone {
    * block(1GB page).
    */
 	unsigned long		*pageblock_freepages;
+  /* To maintain the most recent access timestamp in jiffies by the compaction
+   * thread. We track this per pageblock.
+   */
+  unsigned long   *pageblock_access_ts;
 
 	/* zone_start_pfn == zone_start_paddr >> PAGE_SHIFT */
 	unsigned long		zone_start_pfn;

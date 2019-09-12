@@ -1204,7 +1204,8 @@ out:
 	 * we want to retry.
 	 */
 	if (rc == MIGRATEPAGE_SUCCESS) {
-		put_page(page);
+		//put_page(page);
+		put_page_buddy(page);
 		if (reason == MR_MEMORY_FAILURE) {
 			/*
 			 * Set PG_HWPoison on just freed page

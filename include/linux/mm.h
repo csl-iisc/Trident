@@ -627,6 +627,7 @@ static inline struct page *virt_to_head_page(const void *x)
 }
 
 void __put_page(struct page *page);
+void __put_page_buddy(struct page *page);
 
 void put_pages_list(struct list_head *pages);
 
@@ -872,6 +873,26 @@ static inline void put_page(struct page *page)
 
 	if (put_page_testzero(page))
 		__put_page(page);
+}
+
+static inline void put_page_buddy(struct page *page)
+{
+	page = compound_head(page);
+
+	/*
+	 * For private device pages we need to catch refcount transition from
+	 * 2 to 1, when refcount reach one it means the private device page is
+	 * free and we need to inform the device driver through callback. See
+	 * include/linux/memremap.h and HMM for details.
+	 */
+	if (IS_HMM_ENABLED && unlikely(is_device_private_page(page) ||
+	    unlikely(is_device_public_page(page)))) {
+		put_zone_device_private_or_public_page(page);
+		return;
+	}
+
+	if (put_page_testzero(page))
+		__put_page_buddy(page);
 }
 
 #if defined(CONFIG_SPARSEMEM) && !defined(CONFIG_SPARSEMEM_VMEMMAP)

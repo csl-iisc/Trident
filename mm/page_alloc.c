@@ -2780,6 +2780,19 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
 	}
 }
 
+static void free_unref_page_commit_buddy(struct page *page, unsigned long pfn)
+{
+  struct zone *zone = page_zone(page);
+  struct per_cpu_pages *pcp;
+  int migratetype;
+
+  migratetype = get_pcppage_migratetype(page);
+  __count_vm_event(PGFREE);
+
+  free_one_page(zone, page, pfn, 0, migratetype);
+  return;
+}
+
 /*
  * Free a 0-order page
  */
@@ -2794,6 +2807,22 @@ void free_unref_page(struct page *page)
 	local_irq_save(flags);
 	free_unref_page_commit(page, pfn);
 	local_irq_restore(flags);
+}
+
+/*
+ *  * Free a 0-order page directly into buddy.
+ *   */
+void free_unref_page_buddy(struct page *page)
+{
+    unsigned long flags;
+      unsigned long pfn = page_to_pfn(page);
+
+        if (!free_unref_page_prepare(page, pfn))
+              return;
+
+          local_irq_save(flags);
+            free_unref_page_commit_buddy(page, pfn);
+              local_irq_restore(flags);
 }
 
 /*
@@ -6163,10 +6192,14 @@ static inline void setup_usemap(struct pglist_data *pgdat, struct zone *zone,
         unsigned long pb_array_size = pageblock_array_size(zone_start_pfn, zonesize);
         zone->pageblock_freepages = NULL;
 
-	if (pb_array_size)
+	if (pb_array_size){
                 zone->pageblock_freepages =
                         memblock_virt_alloc_node_nopanic(pb_array_size,
                                                          pgdat->node_id);
+                zone->pageblock_access_ts =
+                        memblock_virt_alloc_node_nopanic(pb_array_size,
+                                                         pgdat->node_id);
+  }
 }
 #endif /* CONFIG_SPARSEMEM */
 

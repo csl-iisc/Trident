@@ -22,6 +22,8 @@
 #include <linux/kthread.h>
 #include <linux/freezer.h>
 #include <linux/page_owner.h>
+#include <linux/gfp.h>
+#include <linux/mm.h>
 #include "internal.h"
 
 #ifdef CONFIG_COMPACTION
@@ -50,7 +52,9 @@ static inline void count_compact_events(enum vm_event_item item, long delta)
 #define pageblock_end_pfn(pfn)		block_end_pfn(pfn, pageblock_order)
 
 int current_src_index = 0;
+int previous_src_index = 0;
 int current_dst_index = 0;
+unsigned long compaction_timeout = 120000; //120 milli seconds.
 
 static unsigned long release_freepages(struct list_head *freelist)
 {
@@ -65,6 +69,28 @@ static unsigned long release_freepages(struct list_head *freelist)
       high_pfn = pfn;
   }
 
+  return high_pfn;
+}
+
+/* During smart compaction, we don't want 0 order pages we migrate to go to pcp
+ * lists. Instead we release them directly to the buddy allocator.
+ * As all the 0 order pages will be in the buddy, it can merge them into higher
+ * order pages. If we give them to pcp lists, they are used again and hence
+ * can't form higher order pages.
+ */
+static unsigned long release_freepages_buddy(struct list_head *freelist)
+{
+  struct page *page, *next;
+  unsigned long high_pfn = 0;
+  list_for_each_entry_safe(page, next, freelist, lru) {
+    unsigned long pfn = page_to_pfn(page);
+    list_del(&page->lru);
+    if (put_page_testzero(page)) {
+      free_unref_page_buddy(page);
+    }
+    if (pfn > high_pfn)
+      high_pfn = pfn;
+  }
   return high_pfn;
 }
 
@@ -897,7 +923,7 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
      * contention, to give chance to IRQs. Abort async compaction
      * if contended.
      */
-    if (!(low_pfn % SWAP_CLUSTER_MAX)
+    if ((cc->order != 18) && !(low_pfn % SWAP_CLUSTER_MAX)
         && compact_unlock_should_abort(zone_lru_lock(zone), flags,
           &locked, cc))
       break;
@@ -1223,26 +1249,41 @@ static unsigned long pfn_pageblock_freepages(struct zone *zone, bool largest){
     /* Skip pageblock if it is not of movable type or cannot be migrated.*/
     if(get_pageblock_migratetype(page) != MIGRATE_MOVABLE || get_pageblock_skip(page))
       continue;
-    if(zone->pageblock_freepages[iterator] > maxi && (iterator != current_src_index)){
+    /* If a pageblock was selected for migration very recently and it still
+     * having free pages, it may have some pinned pages. So, we will skip that
+     * pageblock for sometime.
+     */
+    if((iterator != previous_src_index) &&
+        zone->pageblock_freepages[iterator] > maxi &&
+        (jiffies_to_msecs(jiffies - zone->pageblock_access_ts[iterator]) > compaction_timeout))
+    {
       maxi = zone->pageblock_freepages[iterator];
       maxi_index = iterator;
     }
     /* Make sure the source and destination are not the same pageblocks. */
-    if(zone->pageblock_freepages[iterator] < mini && (zone->pageblock_freepages[iterator] != 0) && (iterator != current_src_index)){
+    if(zone->pageblock_freepages[iterator] < mini &&
+        (zone->pageblock_freepages[iterator] != 0) &&
+        (iterator != current_src_index) && (iterator != current_dst_index))
+    {
       mini = zone->pageblock_freepages[iterator];
       mini_index = iterator;
     }
   }
 
   if(largest == true) {
-    if(maxi_index == -1)
+    if(maxi_index == -1){
       maxi_index = 0;
+      return0;
+    }
     current_src_index = maxi_index;
+    zone->pageblock_access_ts[maxi_index] = jiffies;
     return start_pfn + (maxi_index * pageblock_nr_pages);
   }
   else {
-    if(mini_index == -1)
+    if(mini_index == -1){
       mini_index = 0;
+      return 0;
+    }
     current_dst_index = mini_index;
     return start_pfn + (mini_index * pageblock_nr_pages);
   }
@@ -1377,6 +1418,8 @@ static void isolate_freepages_pud(struct compact_control *cc)
    */
   while(1) {
     isolate_start_pfn = pfn_pageblock_freepages(cc->zone, false);
+    if(isolate_start_pfn == 0)
+      return;
     block_start_pfn = pageblock_start_pfn(isolate_start_pfn);
     block_end_pfn = min(block_start_pfn + pageblock_nr_pages,
         zone_end_pfn(zone));
@@ -1386,9 +1429,10 @@ static void isolate_freepages_pud(struct compact_control *cc)
      * suitable migration targets, so periodically check if we need
      * to schedule, or even abort async compaction.
      */
-    if (!(block_start_pfn % (SWAP_CLUSTER_MAX * pageblock_nr_pages))
+    /* if (!(block_start_pfn % (SWAP_CLUSTER_MAX * pageblock_nr_pages))
         && compact_should_abort(cc))
       break;
+      */
 
     page = pageblock_pfn_to_page(block_start_pfn, block_end_pfn,
         zone);
@@ -1612,6 +1656,8 @@ static isolate_migrate_t isolate_migratepages_pud(struct zone *zone,
   /* We will select the page block with the least number of movable pages or
    * highest number of free pages. Then migrate those free pages. */
   low_pfn = pfn_pageblock_freepages(cc->zone, true);
+  if(low_pfn == 0)
+    return ISOLATE_ABORT;
   low_pfn_free = low_pfn;
   block_start_pfn = pageblock_start_pfn(low_pfn);
   if (block_start_pfn < zone->zone_start_pfn)
@@ -1644,7 +1690,7 @@ static isolate_migrate_t isolate_migratepages_pud(struct zone *zone,
    * of work satisfies the allocation.
    */
   if (!suitable_migration_source(cc, page))
-    return ISOLATE_ABORT;
+    return ISOLATE_NONE;
 
   /* Perform the isolation */
   low_pfn = isolate_migratepages_block(cc, low_pfn,
@@ -1662,6 +1708,14 @@ static isolate_migrate_t isolate_migratepages_pud(struct zone *zone,
   /* Record where migration scanner will be restarted. */
   cc->migrate_pfn = low_pfn;
 
+  /* Even if were not able to isolate atleast 1 free base page, the pageblock
+   * is not useful for 1GB page. So, just skip that block.
+   */
+  if(zone->pageblock_freepages[current_src_index] != 0){
+    release_freepages_buddy(&cc->src_freepages);
+    putback_movable_pages(&cc->migratepages);
+    cc->nr_migratepages = 0;
+  }
   return cc->nr_migratepages ? ISOLATE_SUCCESS : ISOLATE_NONE;
 }
 
@@ -1956,20 +2010,22 @@ static enum compact_result compact_zone(struct zone *zone, struct compact_contro
   migrate_prep_local();
 
   int count_iter = 0;
+  previous_src_index = current_src_index = current_dst_index = -1;
   while ((ret = compact_finished(zone, cc)) == COMPACT_CONTINUE) {
     int err;
     count_iter++;
-    if(cc->order == 18 && count_iter > 50){
+    if(cc->order == 18 && count_iter > 20){
       ret = COMPACT_CONTENDED;
       cc->nr_migratepages = 0;
       goto out;
     }
+    previous_src_index = current_src_index;
     current_src_index = current_dst_index = -1;
     switch (isolate_migratepages_wrapper(zone, cc)) {
       case ISOLATE_ABORT:
         ret = COMPACT_CONTENDED;
         putback_movable_pages(&cc->migratepages);
-        release_freepages(&cc->src_freepages);
+        release_freepages_buddy(&cc->src_freepages);
         cc->nr_migratepages = 0;
         goto out;
       case ISOLATE_NONE:
@@ -1993,7 +2049,7 @@ static enum compact_result compact_zone(struct zone *zone, struct compact_contro
     cc->nr_migratepages = 0;
     if (err) {
       putback_movable_pages(&cc->migratepages);
-      release_freepages(&cc->src_freepages);
+      release_freepages_buddy(&cc->src_freepages);
       /*
        * migrate_pages() may return -ENOMEM when scanners meet
        * and we want compact_finished() to detect it
@@ -2029,7 +2085,7 @@ check_drain:
       unsigned long current_block_start =
         block_start_pfn(cc->migrate_pfn, cc->order);
       if (cc->last_migrated_pfn < current_block_start) {
-        release_freepages(&cc->src_freepages);
+        release_freepages_buddy(&cc->src_freepages);
         cpu = get_cpu();
         lru_add_drain_cpu(cpu);
         drain_local_pages(zone);
@@ -2040,7 +2096,7 @@ check_drain:
     }
 
     //Just release the src free pages if any.
-    release_freepages(&cc->src_freepages);
+    release_freepages_buddy(&cc->src_freepages);
   }
 
 out:
