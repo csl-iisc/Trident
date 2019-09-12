@@ -1710,8 +1710,12 @@ static isolate_migrate_t isolate_migratepages_pud(struct zone *zone,
 
   /* Even if were not able to isolate atleast 1 free base page, the pageblock
    * is not useful for 1GB page. So, just skip that block.
+   * Even if 1GB compaction fails because of few base pages, it is possible
+   * that enough 2MB pages are formed in the buddy. Then also, we can skip the
+   * migration and release back the existing free pages back to buddy.
    */
-  if(zone->pageblock_freepages[current_src_index] != 0){
+  if(zone->pageblock_freepages[current_src_index] != 0 &&
+      (zone->free_area[9].nr_free > 512)){
     release_freepages_buddy(&cc->src_freepages);
     putback_movable_pages(&cc->migratepages);
     cc->nr_migratepages = 0;
