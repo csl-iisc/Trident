@@ -1273,7 +1273,7 @@ static unsigned long pfn_pageblock_freepages(struct zone *zone, bool largest){
   if(largest == true) {
     if(maxi_index == -1){
       maxi_index = 0;
-      return0;
+      return 0;
     }
     current_src_index = maxi_index;
     zone->pageblock_access_ts[maxi_index] = jiffies;
@@ -1977,7 +1977,7 @@ static enum compact_result compact_zone(struct zone *zone, struct compact_contro
    * Clear pageblock skip if there were failures recently and compaction
    * is about to be retried after being deferred.
    */
-  if (order != 18 && compaction_restarting(zone, cc->order))
+  if (cc->order != 18 && compaction_restarting(zone, cc->order))
     __reset_isolation_suitable(zone);
 
   /*
