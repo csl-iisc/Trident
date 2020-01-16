@@ -1410,11 +1410,11 @@ static int collapse_huge_onegb_page(struct mm_struct *mm,
   new_page = khugepaged_alloc_huge_onegb_page(hpage, gfp, node);
   if (!new_page) {
     result = SCAN_ALLOC_HUGE_PAGE_FAIL;
-    printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+    //printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
     goto out_nolock;
   }
 
-  printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+  //printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
   if (unlikely(mem_cgroup_try_charge(new_page, mm, gfp, &memcg, true))) {
     result = SCAN_CGROUP_CHARGE_FAIL;
     goto out_nolock;
@@ -1543,7 +1543,7 @@ static int collapse_huge_onegb_page(struct mm_struct *mm,
     address += PAGE_SIZE * HPAGE_PMD_NR;
   }
 
-  printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+  //printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
   /* If we reach here, we successfully isolated the entire 1GB range of pud.
    * We can proceed further deterministically.
    */
@@ -1574,7 +1574,7 @@ static int collapse_huge_onegb_page(struct mm_struct *mm,
     }
     address += PAGE_SIZE * HPAGE_PMD_NR;
   }
-  printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+  //printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
   address = backed_address;
   __SetPageUptodate(new_page);
   _pud_orig = _pud;
@@ -1618,7 +1618,7 @@ static int collapse_huge_onegb_page(struct mm_struct *mm,
   khugepaged_pages_collapsed++;
   result = SCAN_SUCCEED;
   ret = 1;
-  printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+  //printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 out_up_write:
   up_write(&mm->mmap_sem);
 out_nolock:
@@ -1940,9 +1940,9 @@ static int khugepaged_scan_pud(struct mm_struct *mm,
   }
   if (ret) {
     node = khugepaged_find_target_node();
-    printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+    //printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
     collapse_huge_onegb_page(mm, temp_address, hpage, node, referenced);
-    printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+    //printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
   }
   return ret;
 out_unmap:
@@ -2471,9 +2471,9 @@ skip:
          */
         if(khugepaged_collapse_pud && (!(khugepaged_scan.address & ~HPAGE_PUD_MASK) && (khugepaged_scan.address + HPAGE_PUD_SIZE <= hend))) {
           is_pud = 1;
-          printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+          //printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
           ret = khugepaged_scan_pud(mm, vma, khugepaged_scan.address, hpage);
-          printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
+          //printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
         }
         if(khugepaged_collapse_pmd && ((is_pud == 0) || (is_pud == 1 && ret == 0))) {
           is_pud = 0;
