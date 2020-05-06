@@ -19,6 +19,8 @@
 #include <linux/swapops.h>
 #include <linux/shmem_fs.h>
 
+#include <uapi/linux/kvm_para.h>
+
 #include <asm/tlb.h>
 #include <asm/pgalloc.h>
 #include <asm/pgtable.h>
@@ -75,6 +77,10 @@ static DECLARE_WAIT_QUEUE_HEAD(khugepaged_wait);
  */
 static unsigned int khugepaged_max_ptes_none __read_mostly;
 static unsigned int khugepaged_max_ptes_swap __read_mostly;
+/*
+ * default collapsing method.
+ */
+static unsigned int khugepaged_collapse_via_hypercall __read_mostly = 0;
 
 #define MM_SLOTS_HASH_BITS 10
 static __read_mostly DEFINE_HASHTABLE(mm_slots_hash, MM_SLOTS_HASH_BITS);
@@ -112,6 +118,33 @@ static struct khugepaged_scan khugepaged_scan = {
 };
 
 #ifdef CONFIG_SYSFS
+static ssize_t collapse_via_hypercall_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
+{
+	return sprintf(buf, "%u\n", khugepaged_collapse_via_hypercall);
+}
+
+static ssize_t collapse_via_hypercall_store(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		const char *buf, size_t count)
+{
+	unsigned long val;
+	int err;
+
+	err = kstrtol(buf, 10, &val);
+	if (err || val > 1)
+		return -EINVAL;
+
+	khugepaged_collapse_via_hypercall = val;
+
+	return count;
+}
+
+static struct kobj_attribute khugepaged_collapse_via_hypercall_attr =
+__ATTR(collapse_via_hypercall, 0644, collapse_via_hypercall_show,
+		collapse_via_hypercall_store);
+
 static ssize_t scan_sleep_millisecs_show(struct kobject *kobj,
 		struct kobj_attribute *attr,
 		char *buf)
@@ -360,6 +393,7 @@ static struct attribute *khugepaged_attr[] = {
 	&khugepaged_max_ptes_swap_attr.attr,
 	&khugepaged_collapse_pud_attr.attr,
 	&khugepaged_collapse_pmd_attr.attr,
+	&khugepaged_collapse_via_hypercall_attr.attr,
 	NULL,
 };
 
@@ -870,7 +904,16 @@ static void __collapse_huge_page_copy(pte_t *pte, struct page *page,
 			}
 		} else {
 			src_page = pte_page(pteval);
-			copy_user_highpage(page, src_page, address, vma);
+			if (khugepaged_collapse_via_hypercall) {
+				if (kvm_hypercall3(KVM_HC_EXCHANGE_PFNS,
+					page_to_pfn(page), page_to_pfn(src_page),
+					PAGE_SIZE)) {
+					trace_printk("***FAILED***\n");
+					copy_user_highpage(page, src_page, address, vma);
+				} else
+					trace_printk("****PASSED****\n");
+			} else
+				copy_user_highpage(page, src_page, address, vma);
 			VM_BUG_ON_PAGE(page_mapcount(src_page) != 1, src_page);
 			release_pte_page(src_page);
 			/*
@@ -1379,7 +1422,7 @@ static int collapse_huge_onegb_page(struct mm_struct *mm,
 		struct page **hpage,
 		int node, int referenced)
 {
-	pmd_t *pmd, *_pmd;
+	pmd_t *pmd;
 	pud_t *pud, _pud, _pud_orig;//We need _pud_orig to store the original pud entry.
 	pte_t *pte, *_pte;
 	struct page *new_page;
