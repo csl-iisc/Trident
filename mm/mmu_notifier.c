@@ -189,6 +189,21 @@ void __mmu_notifier_invalidate_range_start(struct mm_struct *mm,
 }
 EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_range_start);
 
+void __mmu_notifier_invalidate_range_start_noflush(struct mm_struct *mm,
+				  unsigned long start, unsigned long end)
+{
+	struct mmu_notifier *mn;
+	int id;
+
+	id = srcu_read_lock(&srcu);
+	hlist_for_each_entry_rcu(mn, &mm->mmu_notifier_mm->list, hlist) {
+		if (mn->ops->invalidate_range_start_noflush)
+			mn->ops->invalidate_range_start_noflush(mn, mm, start, end);
+	}
+	srcu_read_unlock(&srcu, id);
+}
+EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_range_start_noflush);
+
 void __mmu_notifier_invalidate_range_end(struct mm_struct *mm,
 					 unsigned long start,
 					 unsigned long end,

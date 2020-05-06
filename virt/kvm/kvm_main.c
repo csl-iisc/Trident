@@ -354,9 +354,42 @@ static void kvm_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 	kvm->mmu_notifier_count++;
 	need_tlb_flush = kvm_unmap_hva_range(kvm, start, end);
 	need_tlb_flush |= kvm->tlbs_dirty;
+	need_tlb_flush |= kvm->tlb_flush_pending;
+	/* we've to flush the tlb before the pages can be freed */
+	if (need_tlb_flush) {
+		kvm_flush_remote_tlbs(kvm);
+		kvm->tlb_flush_pending = false;
+	}
+
+	spin_unlock(&kvm->mmu_lock);
+
+	kvm_arch_mmu_notifier_invalidate_range(kvm, start, end);
+
+	srcu_read_unlock(&kvm->srcu, idx);
+}
+
+static void
+kvm_mmu_notifier_invalidate_range_start_noflush(struct mmu_notifier *mn,
+						    struct mm_struct *mm,
+						    unsigned long start,
+						    unsigned long end)
+{
+	struct kvm *kvm = mmu_notifier_to_kvm(mn);
+	int need_tlb_flush = 0, idx;
+
+	idx = srcu_read_lock(&kvm->srcu);
+	spin_lock(&kvm->mmu_lock);
+	/*
+	 * The count increase must become visible at unlock time as no
+	 * spte can be established without taking the mmu_lock and
+	 * count is also read inside the mmu_lock critical section.
+	 */
+	kvm->mmu_notifier_count++;
+	need_tlb_flush = kvm_unmap_hva_range(kvm, start, end);
+	need_tlb_flush |= kvm->tlbs_dirty;
 	/* we've to flush the tlb before the pages can be freed */
 	if (need_tlb_flush)
-		kvm_flush_remote_tlbs(kvm);
+		kvm->tlb_flush_pending = true;
 
 	spin_unlock(&kvm->mmu_lock);
 
@@ -473,6 +506,7 @@ static const struct mmu_notifier_ops kvm_mmu_notifier_ops = {
 	.flags			= MMU_INVALIDATE_DOES_NOT_BLOCK,
 	.invalidate_range_start	= kvm_mmu_notifier_invalidate_range_start,
 	.invalidate_range_end	= kvm_mmu_notifier_invalidate_range_end,
+	.invalidate_range_start_noflush	= kvm_mmu_notifier_invalidate_range_start_noflush,
 	.clear_flush_young	= kvm_mmu_notifier_clear_flush_young,
 	.clear_young		= kvm_mmu_notifier_clear_young,
 	.test_young		= kvm_mmu_notifier_test_young,
