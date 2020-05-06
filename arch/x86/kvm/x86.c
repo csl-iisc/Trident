@@ -6689,6 +6689,35 @@ void kvm_vcpu_deactivate_apicv(struct kvm_vcpu *vcpu)
 	kvm_x86_ops->refresh_apicv_exec_ctrl(vcpu);
 }
 
+extern int
+tr_exchange_pfns(struct mm_struct *mm, unsigned long addr1, unsigned long addr2,
+			unsigned long size);
+static int kvm_exchange_pfns(struct kvm_vcpu *vcpu, unsigned long gfn1,
+				unsigned long gfn2, unsigned long size)
+{
+	int ret;
+	struct mm_struct *mm;
+	unsigned long addr1, addr2, pfn1, pfn2;
+
+	if (gfn1 == gfn2)
+		return 0;
+
+	mm = vcpu->kvm->mm;
+	addr1 = gfn_to_hva(vcpu->kvm, gfn1);
+	addr2 = gfn_to_hva(vcpu->kvm, gfn2);
+
+	pfn1 = kvm_vcpu_gfn_to_pfn(vcpu, gfn1);
+	pfn2 = kvm_vcpu_gfn_to_pfn(vcpu, gfn2);
+
+	if (!pfn_valid(pfn1) || !pfn_valid(pfn2))
+		return -EINVAL;
+
+	ret = tr_exchange_pfns(mm, addr1, addr2, size);
+	kvm_release_pfn_clean(pfn1);
+	kvm_release_pfn_clean(pfn2);
+	return ret;
+}
+
 int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 {
 	unsigned long nr, a0, a1, a2, a3, ret;
@@ -6732,6 +6761,9 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		ret = kvm_pv_clock_pairing(vcpu, a0, a1);
 		break;
 #endif
+	case KVM_HC_EXCHANGE_PFNS:
+		ret = kvm_exchange_pfns(vcpu, a0, a1, a2);
+		break;
 	default:
 		ret = -KVM_ENOSYS;
 		break;

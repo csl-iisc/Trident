@@ -4725,3 +4725,159 @@ void ptlock_free(struct page *page)
 	kmem_cache_free(page_ptl_cachep, page->ptl);
 }
 #endif
+
+static inline bool feasible_page_exchange(pte_t *ptep1, pte_t *ptep2)
+{
+	if (!ptep1 || !ptep2)
+		return false;
+
+	if (pte_none(*ptep1) || pte_none(*ptep2))
+		return false;
+
+	return true;
+}
+
+static inline bool feasible_thp_exchange(pmd_t *pmd1, pmd_t *pmd2)
+{
+	if (!pmd1 || !pmd2)
+		return false;
+
+	if (!pmd_trans_huge(*pmd1) || !pmd_trans_huge(*pmd2))
+		return false;
+
+	return true;
+}
+
+static inline pmd_t *get_mm_pmd(struct mm_struct *mm, unsigned long addr)
+{
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t pmde, *pmd = NULL;
+
+	pgd = pgd_offset(mm, addr);
+	if (!pgd_present(*pgd))
+		goto out;
+
+	p4d = p4d_offset(pgd, addr);
+	if (!p4d_present(*p4d))
+		goto out;
+
+	pud = pud_offset(p4d, addr);
+	if (!pud_present(*pud))
+		goto out;
+
+        pmd = pmd_offset(pud, addr);
+	pmde = *pmd;
+	barrier();
+	if (!pmd_present(pmde))
+		pmd = NULL;
+out:
+	return pmd;
+}
+
+static int tr_exchange_huge_pages(struct mm_struct *mm, unsigned long addr1,
+					unsigned long addr2)
+{
+	pmd_t *pmd1, *pmd2, tmp;
+	spinlock_t *pmd_ptl1, *pmd_ptl2;
+	struct vm_area_struct *vma1, *vma2;
+
+	down_read(&mm->mmap_sem);
+	vma1 = find_vma(mm, addr1);
+	vma2 = find_vma(mm, addr2);
+		goto failed;
+
+	pmd1 = get_mm_pmd(mm, addr1);
+	pmd2 = get_mm_pmd(mm, addr2);
+
+	if (!feasible_thp_exchange(pmd1, pmd2))
+		goto failed;
+
+	pmd_ptl1 = pmd_lockptr(mm, pmd1);
+	pmd_ptl2 = pmd_lockptr(mm, pmd2);
+
+	mmu_notifier_invalidate_range_start(mm, addr1, addr1 + HPAGE_PMD_SIZE);
+	mmu_notifier_invalidate_range_start(mm, addr2, addr2 + HPAGE_PMD_SIZE);
+
+	spin_lock(pmd_ptl1);
+	if (pmd_ptl1 != pmd_ptl2)
+		spin_lock(pmd_ptl2);
+
+	tmp = *pmd1;
+	pmdp_invalidate(vma1, addr1, pmd1);
+	pmdp_invalidate(vma1, addr2, pmd2);
+
+	set_pmd_at(mm, addr1, pmd1, *pmd2);
+	set_pmd_at(mm, addr2, pmd2, tmp);
+
+	if (pmd_ptl1 != pmd_ptl2)
+		spin_unlock(pmd_ptl2);
+	spin_unlock(pmd_ptl1);
+
+	mmu_notifier_invalidate_range_end(mm, addr1, addr1 + HPAGE_PMD_SIZE);
+	mmu_notifier_invalidate_range_end(mm, addr2, addr2 + HPAGE_PMD_SIZE);
+	up_read(&mm->mmap_sem);
+	return 0;
+
+failed:
+	down_read(&mm->mmap_sem);
+	return -EINVAL;
+}
+
+static int tr_exchange_pages(struct mm_struct *mm, unsigned long addr1,
+					unsigned long addr2)
+{
+	pte_t *ptep1, *ptep2, tmp;
+	pmd_t *pmd1, *pmd2;
+	spinlock_t *ptl1, *ptl2;
+
+	down_read(&mm->mmap_sem);
+	pmd1 = get_mm_pmd(mm, addr1);
+	pmd2 = get_mm_pmd(mm, addr2);
+	if (!pmd1 || !pmd2)
+		goto failed;
+
+	ptep1 = pte_offset_map(pmd1, addr1);
+	ptep2 = pte_offset_map(pmd2, addr2);
+	if (!feasible_page_exchange(ptep1, ptep2))
+		goto failed;
+
+	mmu_notifier_invalidate_range_start(mm, addr1, addr1 + PAGE_SIZE);
+	mmu_notifier_invalidate_range_start(mm, addr2, addr2 + PAGE_SIZE);
+
+	ptl1 = pte_lockptr(mm, pmd1);
+	ptl2 = pte_lockptr(mm, pmd2);
+	spin_lock(ptl1);
+	if (ptl1 != ptl2)
+		spin_lock(ptl2);
+
+	tmp = *ptep1;
+	set_pte_at(mm, addr1, ptep1, *ptep2);
+	set_pte_at(mm, addr2, ptep2, tmp);
+
+	if (ptl1 != ptl2)
+		spin_unlock(ptl2);
+	spin_unlock(ptl1);
+
+	mmu_notifier_invalidate_range_end(mm, addr1, addr1 + PAGE_SIZE);
+	mmu_notifier_invalidate_range_end(mm, addr2, addr2 + PAGE_SIZE);
+	up_read(&mm->mmap_sem);
+	return 0;
+
+failed:
+	up_read(&mm->mmap_sem);
+	return -1;
+}
+
+int tr_exchange_pfns(struct mm_struct *mm, unsigned long addr1, unsigned long addr2,
+				unsigned long size)
+{
+	if (size == PAGE_SIZE)
+		return tr_exchange_pages(mm, addr1, addr2);
+	else if (size == HPAGE_PMD_SIZE)
+		return tr_exchange_huge_pages(mm, addr1, addr2);
+
+	return -EINVAL;
+}
+EXPORT_SYMBOL(tr_exchange_pfns);
