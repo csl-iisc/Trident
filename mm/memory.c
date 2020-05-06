@@ -4843,7 +4843,7 @@ static int tr_exchange_pages(struct mm_struct *mm, unsigned long addr1,
 	if (!feasible_page_exchange(ptep1, ptep2))
 		goto failed;
 
-	mmu_notifier_invalidate_range_start(mm, addr1, addr1 + PAGE_SIZE);
+	mmu_notifier_invalidate_range_start_noflush(mm, addr1, addr1 + PAGE_SIZE);
 	mmu_notifier_invalidate_range_start(mm, addr2, addr2 + PAGE_SIZE);
 
 	ptl1 = pte_lockptr(mm, pmd1);
