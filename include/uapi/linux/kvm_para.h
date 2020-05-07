@@ -27,6 +27,7 @@
 #define KVM_HC_MIPS_CONSOLE_OUTPUT	8
 #define KVM_HC_CLOCK_PAIRING		9
 #define KVM_HC_EXCHANGE_PFNS		10
+#define KVM_HC_EXCHANGE_PFN_RANGE	11
 
 /*
  * hypercalls use architecture specific

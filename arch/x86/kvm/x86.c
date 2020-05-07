@@ -56,6 +56,8 @@
 #include <linux/sched/stat.h>
 #include <linux/mem_encrypt.h>
 
+#include <linux/sched/mm.h>
+
 #include <trace/events/kvm.h>
 
 #include <asm/debugreg.h>
@@ -6689,32 +6691,81 @@ void kvm_vcpu_deactivate_apicv(struct kvm_vcpu *vcpu)
 	kvm_x86_ops->refresh_apicv_exec_ctrl(vcpu);
 }
 
-extern int
-tr_exchange_pfns(struct mm_struct *mm, unsigned long addr1, unsigned long addr2,
-			unsigned long size);
+extern int tr_exchange_pfns(struct mm_struct *mm, unsigned long addr1,
+			unsigned long addr2, unsigned long size);
+extern int tr_exchange_pfn_range(struct mm_struct *mm, unsigned long *map1,
+			unsigned long *map2, unsigned long size);
+
 static int kvm_exchange_pfns(struct kvm_vcpu *vcpu, unsigned long gfn1,
 				unsigned long gfn2, unsigned long size)
 {
 	int ret;
 	struct mm_struct *mm;
-	unsigned long addr1, addr2, pfn1, pfn2;
+	unsigned long addr1, addr2;
 
 	if (gfn1 == gfn2)
 		return 0;
 
 	mm = vcpu->kvm->mm;
+	mmget(mm);
+
 	addr1 = gfn_to_hva(vcpu->kvm, gfn1);
 	addr2 = gfn_to_hva(vcpu->kvm, gfn2);
-
-	pfn1 = kvm_vcpu_gfn_to_pfn(vcpu, gfn1);
-	pfn2 = kvm_vcpu_gfn_to_pfn(vcpu, gfn2);
-
-	if (!pfn_valid(pfn1) || !pfn_valid(pfn2))
-		return -EINVAL;
-
 	ret = tr_exchange_pfns(mm, addr1, addr2, size);
-	kvm_release_pfn_clean(pfn1);
-	kvm_release_pfn_clean(pfn2);
+	mmput(mm);
+	return ret;
+}
+
+/*
+ * Here, gfn1 contains all distinct gfns that need to be remapped.
+ * gfn2 denotes the starting gfn for swapping range.
+ */
+static int kvm_exchange_pfn_range(struct kvm_vcpu *vcpu, unsigned long gfn1,
+				unsigned long gfn2, unsigned long size)
+{
+	int i, ret = 0;
+	struct mm_struct *mm;
+	unsigned long addr1, addr2;
+	unsigned long *map1, *ptr1;
+	unsigned long *map2, *ptr2;
+
+	if (gfn1 == gfn2)
+		return 0;
+
+	map1 = kmalloc(PAGE_SIZE, GFP_KERNEL | __GFP_ZERO);
+	if (!map1)
+		return -ENOMEM;
+
+	map2 = kmalloc(PAGE_SIZE, GFP_KERNEL | __GFP_ZERO);
+	if (!map2) {
+		kfree(map1);
+		return -ENOMEM;
+	}
+
+	mm = vcpu->kvm->mm;
+	mmget(mm);
+	addr1 = gfn_to_hva(vcpu->kvm, gfn1);
+	addr2 = gfn_to_hva(vcpu->kvm, gfn2);
+	ptr1 = (unsigned long *)addr1;
+	ptr2 = (unsigned long *)addr2;
+	for (i = 0; i < PAGE_SIZE / sizeof(unsigned long); i++) {
+		map1[i] = gfn_to_hva(vcpu->kvm, ptr1[i]);
+		map2[i] = gfn_to_hva(vcpu->kvm, ptr2[i]);
+		if (!map1[i] || !map2[i])
+			break;
+	}
+	ret = tr_exchange_pfn_range(mm, map1, map1, size);
+/*
+	for (i = 0; i < PAGE_SIZE / sizeof(unsigned long); i++) {
+		if (!map1[i] || !map2[i])
+			break;
+		if(tr_exchange_pfns(mm, map1[i], map2[i], size))
+			ret++;
+	}
+*/
+	mmput(mm);
+	kfree(map1);
+	kfree(map2);
 	return ret;
 }
 
@@ -6763,6 +6814,9 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 #endif
 	case KVM_HC_EXCHANGE_PFNS:
 		ret = kvm_exchange_pfns(vcpu, a0, a1, a2);
+		break;
+	case KVM_HC_EXCHANGE_PFN_RANGE:
+		ret = kvm_exchange_pfn_range(vcpu, a0, a1, a2);
 		break;
 	default:
 		ret = -KVM_ENOSYS;

@@ -4870,8 +4870,8 @@ failed:
 	return -1;
 }
 
-int tr_exchange_pfns(struct mm_struct *mm, unsigned long addr1, unsigned long addr2,
-				unsigned long size)
+int tr_exchange_pfns(struct mm_struct *mm, unsigned long addr1,
+		unsigned long addr2, unsigned long size)
 {
 	if (size == PAGE_SIZE)
 		return tr_exchange_pages(mm, addr1, addr2);
@@ -4881,3 +4881,18 @@ int tr_exchange_pfns(struct mm_struct *mm, unsigned long addr1, unsigned long ad
 	return -EINVAL;
 }
 EXPORT_SYMBOL(tr_exchange_pfns);
+
+int tr_exchange_pfn_range(struct mm_struct *mm, unsigned long *map1,
+			unsigned long *map2, unsigned long size)
+{
+	int i, failed = 0;
+
+	for (i = 0; i < PAGE_SIZE / sizeof(unsigned long); i++) {
+		if (tr_exchange_pfns(mm, map1[i], map2[i], size)) {
+			failed++;
+			printk(KERN_INFO"PTE Switching failed: %d\t", i);
+		}
+	}
+	return failed;
+}
+EXPORT_SYMBOL(tr_exchange_pfn_range);
