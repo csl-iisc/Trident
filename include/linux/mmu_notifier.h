@@ -162,9 +162,12 @@ struct mmu_notifier_ops {
 				     struct mm_struct *mm,
 				     unsigned long start, unsigned long end);
 
-	void (*invalidate_range_start_noflush)(struct mmu_notifier *mn,
+	void (*invalidate_ranges_start)(struct mmu_notifier *mn,
 				       struct mm_struct *mm,
-				       unsigned long start, unsigned long end);
+				       unsigned long *map , int nr, int size);
+	void (*invalidate_ranges_end)(struct mmu_notifier *mn,
+				       struct mm_struct *mm,
+				       unsigned long *map , int nr, int size);
 	/*
 	 * invalidate_range() is either called between
 	 * invalidate_range_start() and invalidate_range_end() when the
@@ -237,8 +240,10 @@ extern void __mmu_notifier_invalidate_range_start(struct mm_struct *mm,
 extern void __mmu_notifier_invalidate_range_end(struct mm_struct *mm,
 				  unsigned long start, unsigned long end,
 				  bool only_end);
-extern void __mmu_notifier_invalidate_range_start_noflush(struct mm_struct *mm,
-				  unsigned long start, unsigned long end);
+extern void __mmu_notifier_invalidate_ranges_start(struct mm_struct *mm,
+				  unsigned long *map, int nr, int size);
+extern void __mmu_notifier_invalidate_ranges_end(struct mm_struct *mm,
+				  unsigned long *map, int nr, int size);
 extern void __mmu_notifier_invalidate_range(struct mm_struct *mm,
 				  unsigned long start, unsigned long end);
 extern bool mm_has_blockable_invalidate_notifiers(struct mm_struct *mm);
@@ -289,11 +294,18 @@ static inline void mmu_notifier_invalidate_range_start(struct mm_struct *mm,
 		__mmu_notifier_invalidate_range_start(mm, start, end);
 }
 
-static inline void mmu_notifier_invalidate_range_start_noflush(struct mm_struct *mm,
-				  unsigned long start, unsigned long end)
+static inline void mmu_notifier_invalidate_ranges_start(struct mm_struct *mm,
+				  unsigned long *map, int nr, int size)
 {
 	if (mm_has_notifiers(mm))
-		__mmu_notifier_invalidate_range_start_noflush(mm, start, end);
+		__mmu_notifier_invalidate_ranges_start(mm, map, nr, size);
+}
+
+static inline void mmu_notifier_invalidate_ranges_end(struct mm_struct *mm,
+				  unsigned long *map, int nr, int size)
+{
+	if (mm_has_notifiers(mm))
+		__mmu_notifier_invalidate_ranges_end(mm, map, nr, size);
 }
 
 static inline void mmu_notifier_invalidate_range_end(struct mm_struct *mm,

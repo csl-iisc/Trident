@@ -189,20 +189,35 @@ void __mmu_notifier_invalidate_range_start(struct mm_struct *mm,
 }
 EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_range_start);
 
-void __mmu_notifier_invalidate_range_start_noflush(struct mm_struct *mm,
-				  unsigned long start, unsigned long end)
+void __mmu_notifier_invalidate_ranges_start(struct mm_struct *mm,
+			unsigned long *map, int nr, int size)
 {
 	struct mmu_notifier *mn;
 	int id;
 
 	id = srcu_read_lock(&srcu);
 	hlist_for_each_entry_rcu(mn, &mm->mmu_notifier_mm->list, hlist) {
-		if (mn->ops->invalidate_range_start_noflush)
-			mn->ops->invalidate_range_start_noflush(mn, mm, start, end);
+		if (mn->ops->invalidate_ranges_start)
+			mn->ops->invalidate_ranges_start(mn, mm, map, nr, size);
 	}
 	srcu_read_unlock(&srcu, id);
 }
-EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_range_start_noflush);
+EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_ranges_start);
+
+void __mmu_notifier_invalidate_ranges_end(struct mm_struct *mm,
+			unsigned long *map, int nr, int size)
+{
+	struct mmu_notifier *mn;
+	int id;
+
+	id = srcu_read_lock(&srcu);
+	hlist_for_each_entry_rcu(mn, &mm->mmu_notifier_mm->list, hlist) {
+		if (mn->ops->invalidate_ranges_end)
+			mn->ops->invalidate_ranges_end(mn, mm, map, nr, size);
+	}
+	srcu_read_unlock(&srcu, id);
+}
+EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_ranges_end);
 
 void __mmu_notifier_invalidate_range_end(struct mm_struct *mm,
 					 unsigned long start,

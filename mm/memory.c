@@ -4728,12 +4728,23 @@ void ptlock_free(struct page *page)
 
 static inline bool feasible_page_exchange(pte_t *ptep1, pte_t *ptep2)
 {
+	struct page *page1, *page2;
+
 	if (!ptep1 || !ptep2)
 		return false;
 
 	if (pte_none(*ptep1) || pte_none(*ptep2))
 		return false;
 
+
+	page1 = pte_page(*ptep1);
+	page2 = pte_page(*ptep2);
+
+	if (page_mapcount(page1) != 1 || page_mapcount(page2) != 1) {
+		printk("mapcounts: %d %d\n", page_mapcount(page1), page_mapcount(page2));
+		return false;
+	}
+	
 	return true;
 }
 
@@ -4777,7 +4788,7 @@ out:
 }
 
 static int tr_exchange_huge_pages(struct mm_struct *mm, unsigned long addr1,
-					unsigned long addr2)
+				unsigned long addr2, bool invalidate)
 {
 	pmd_t *pmd1, *pmd2, tmp;
 	spinlock_t *pmd_ptl1, *pmd_ptl2;
@@ -4797,8 +4808,10 @@ static int tr_exchange_huge_pages(struct mm_struct *mm, unsigned long addr1,
 	pmd_ptl1 = pmd_lockptr(mm, pmd1);
 	pmd_ptl2 = pmd_lockptr(mm, pmd2);
 
-	mmu_notifier_invalidate_range_start(mm, addr1, addr1 + HPAGE_PMD_SIZE);
-	mmu_notifier_invalidate_range_start(mm, addr2, addr2 + HPAGE_PMD_SIZE);
+	if (invalidate) {
+		mmu_notifier_invalidate_range_start(mm, addr1, addr1 + HPAGE_PMD_SIZE);
+		mmu_notifier_invalidate_range_start(mm, addr2, addr2 + HPAGE_PMD_SIZE);
+	}
 
 	spin_lock(pmd_ptl1);
 	if (pmd_ptl1 != pmd_ptl2)
@@ -4815,8 +4828,10 @@ static int tr_exchange_huge_pages(struct mm_struct *mm, unsigned long addr1,
 		spin_unlock(pmd_ptl2);
 	spin_unlock(pmd_ptl1);
 
-	mmu_notifier_invalidate_range_end(mm, addr1, addr1 + HPAGE_PMD_SIZE);
-	mmu_notifier_invalidate_range_end(mm, addr2, addr2 + HPAGE_PMD_SIZE);
+	if (invalidate) {
+		mmu_notifier_invalidate_range_end(mm, addr1, addr1 + HPAGE_PMD_SIZE);
+		mmu_notifier_invalidate_range_end(mm, addr2, addr2 + HPAGE_PMD_SIZE);
+	}
 	up_read(&mm->mmap_sem);
 	return 0;
 
@@ -4826,7 +4841,7 @@ failed:
 }
 
 static int tr_exchange_pages(struct mm_struct *mm, unsigned long addr1,
-					unsigned long addr2)
+				unsigned long addr2, bool invalidate)
 {
 	pte_t *ptep1, *ptep2, tmp;
 	pmd_t *pmd1, *pmd2;
@@ -4843,8 +4858,10 @@ static int tr_exchange_pages(struct mm_struct *mm, unsigned long addr1,
 	if (!feasible_page_exchange(ptep1, ptep2))
 		goto failed;
 
-	mmu_notifier_invalidate_range_start_noflush(mm, addr1, addr1 + PAGE_SIZE);
-	mmu_notifier_invalidate_range_start(mm, addr2, addr2 + PAGE_SIZE);
+	if (invalidate) {
+		mmu_notifier_invalidate_range_start(mm, addr1, addr1 + PAGE_SIZE);
+		mmu_notifier_invalidate_range_start(mm, addr2, addr2 + PAGE_SIZE);
+	}
 
 	ptl1 = pte_lockptr(mm, pmd1);
 	ptl2 = pte_lockptr(mm, pmd2);
@@ -4859,9 +4876,10 @@ static int tr_exchange_pages(struct mm_struct *mm, unsigned long addr1,
 	if (ptl1 != ptl2)
 		spin_unlock(ptl2);
 	spin_unlock(ptl1);
-
-	mmu_notifier_invalidate_range_end(mm, addr1, addr1 + PAGE_SIZE);
-	mmu_notifier_invalidate_range_end(mm, addr2, addr2 + PAGE_SIZE);
+	if (invalidate) {
+		mmu_notifier_invalidate_range_end(mm, addr1, addr1 + PAGE_SIZE);
+		mmu_notifier_invalidate_range_end(mm, addr2, addr2 + PAGE_SIZE);
+	}
 	up_read(&mm->mmap_sem);
 	return 0;
 
@@ -4871,28 +4889,38 @@ failed:
 }
 
 int tr_exchange_pfns(struct mm_struct *mm, unsigned long addr1,
-		unsigned long addr2, unsigned long size)
+						unsigned long addr2,
+						int size,
+						bool invalidate)
 {
 	if (size == PAGE_SIZE)
-		return tr_exchange_pages(mm, addr1, addr2);
+		return tr_exchange_pages(mm, addr1, addr2, invalidate);
 	else if (size == HPAGE_PMD_SIZE)
-		return tr_exchange_huge_pages(mm, addr1, addr2);
+		return tr_exchange_huge_pages(mm, addr1, addr2, invalidate);
 
 	return -EINVAL;
 }
 EXPORT_SYMBOL(tr_exchange_pfns);
 
 int tr_exchange_pfn_range(struct mm_struct *mm, unsigned long *map1,
-			unsigned long *map2, unsigned long size)
+						unsigned long *map2,
+						unsigned long *result,
+						int size)
 {
 	int i, failed = 0;
 
+	mmu_notifier_invalidate_ranges_start(mm, map1, 512, size);
+	mmu_notifier_invalidate_ranges_start(mm, map2, 512, size);
 	for (i = 0; i < PAGE_SIZE / sizeof(unsigned long); i++) {
-		if (tr_exchange_pfns(mm, map1[i], map2[i], size)) {
+		if (tr_exchange_pfns(mm, map1[i], map2[i], size, false)) {
+			result[i] = -1;
 			failed++;
 			printk(KERN_INFO"PTE Switching failed: %d\t", i);
-		}
+		} else
+			result[i] = 0;
 	}
+	mmu_notifier_invalidate_ranges_end(mm, map1, 512, size);
+	mmu_notifier_invalidate_ranges_end(mm, map2, 512, size);
 	return failed;
 }
 EXPORT_SYMBOL(tr_exchange_pfn_range);

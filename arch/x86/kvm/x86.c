@@ -6692,12 +6692,15 @@ void kvm_vcpu_deactivate_apicv(struct kvm_vcpu *vcpu)
 }
 
 extern int tr_exchange_pfns(struct mm_struct *mm, unsigned long addr1,
-			unsigned long addr2, unsigned long size);
+		unsigned long addr2, int size, bool invalidate);
 extern int tr_exchange_pfn_range(struct mm_struct *mm, unsigned long *map1,
-			unsigned long *map2, unsigned long size);
+						unsigned long *map2,
+						unsigned long *res,
+						int size);
 
 static int kvm_exchange_pfns(struct kvm_vcpu *vcpu, unsigned long gfn1,
-				unsigned long gfn2, unsigned long size)
+						unsigned long gfn2,
+						int size)
 {
 	int ret;
 	struct mm_struct *mm;
@@ -6711,7 +6714,7 @@ static int kvm_exchange_pfns(struct kvm_vcpu *vcpu, unsigned long gfn1,
 
 	addr1 = gfn_to_hva(vcpu->kvm, gfn1);
 	addr2 = gfn_to_hva(vcpu->kvm, gfn2);
-	ret = tr_exchange_pfns(mm, addr1, addr2, size);
+	ret = tr_exchange_pfns(mm, addr1, addr2, size, true);
 	mmput(mm);
 	return ret;
 }
@@ -6721,11 +6724,13 @@ static int kvm_exchange_pfns(struct kvm_vcpu *vcpu, unsigned long gfn1,
  * gfn2 denotes the starting gfn for swapping range.
  */
 static int kvm_exchange_pfn_range(struct kvm_vcpu *vcpu, unsigned long gfn1,
-				unsigned long gfn2, unsigned long size)
+						unsigned long gfn2,
+						unsigned long gfn3,
+						int size)
 {
 	int i, ret = 0;
 	struct mm_struct *mm;
-	unsigned long addr1, addr2;
+	unsigned long addr1, addr2, addr3;
 	unsigned long *map1, *ptr1;
 	unsigned long *map2, *ptr2;
 
@@ -6746,23 +6751,15 @@ static int kvm_exchange_pfn_range(struct kvm_vcpu *vcpu, unsigned long gfn1,
 	mmget(mm);
 	addr1 = gfn_to_hva(vcpu->kvm, gfn1);
 	addr2 = gfn_to_hva(vcpu->kvm, gfn2);
+	addr3 = gfn_to_hva(vcpu->kvm, gfn3);
 	ptr1 = (unsigned long *)addr1;
 	ptr2 = (unsigned long *)addr2;
 	for (i = 0; i < PAGE_SIZE / sizeof(unsigned long); i++) {
 		map1[i] = gfn_to_hva(vcpu->kvm, ptr1[i]);
 		map2[i] = gfn_to_hva(vcpu->kvm, ptr2[i]);
-		if (!map1[i] || !map2[i])
-			break;
 	}
-	ret = tr_exchange_pfn_range(mm, map1, map1, size);
-/*
-	for (i = 0; i < PAGE_SIZE / sizeof(unsigned long); i++) {
-		if (!map1[i] || !map2[i])
-			break;
-		if(tr_exchange_pfns(mm, map1[i], map2[i], size))
-			ret++;
-	}
-*/
+	ret = tr_exchange_pfn_range(mm, map1, map2,
+					(unsigned long *)addr3, size);
 	mmput(mm);
 	kfree(map1);
 	kfree(map2);
@@ -6816,7 +6813,7 @@ int kvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 		ret = kvm_exchange_pfns(vcpu, a0, a1, a2);
 		break;
 	case KVM_HC_EXCHANGE_PFN_RANGE:
-		ret = kvm_exchange_pfn_range(vcpu, a0, a1, a2);
+		ret = kvm_exchange_pfn_range(vcpu, a0, a1, a2, a3);
 		break;
 	default:
 		ret = -KVM_ENOSYS;
