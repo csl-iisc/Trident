@@ -4915,7 +4915,6 @@ int tr_exchange_pfn_range(struct mm_struct *mm, unsigned long *map1,
 		if (tr_exchange_pfns(mm, map1[i], map2[i], size, false)) {
 			result[i] = -1;
 			failed++;
-			printk(KERN_INFO"PTE Switching failed: %d\t", i);
 		} else
 			result[i] = 0;
 	}

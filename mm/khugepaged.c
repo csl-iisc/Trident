@@ -893,8 +893,10 @@ static void __collapse_huge_page_hc(pte_t *pte, struct page *page,
 					spinlock_t *ptl)
 {
 	pte_t *_pte;
-	int i, ret;
+	static int i, ret, total = 0, fail = 0;
 	unsigned long *map1_addr, *map2_addr, *res_addr;
+	unsigned long start_address = address;
+	struct page *start_page = page;
 
 	map1_addr = (unsigned long *)page_to_virt(map1_page);
 	map2_addr = (unsigned long *)page_to_virt(map2_page);
@@ -902,7 +904,7 @@ static void __collapse_huge_page_hc(pte_t *pte, struct page *page,
 	khugepaged_clear_hc_pages();
 	/* gather all gfs to be swapped */
 	for (i = 0, _pte = pte; _pte < pte + HPAGE_PMD_NR;
-			_pte++, page++, address += PAGE_SIZE, i++) {
+			i++, _pte++, page++, address += PAGE_SIZE) {
 		pte_t pteval = *_pte;
 		struct page *src_page;
 
@@ -918,17 +920,26 @@ static void __collapse_huge_page_hc(pte_t *pte, struct page *page,
 	ret = kvm_hypercall4(KVM_HC_EXCHANGE_PFN_RANGE, page_to_pfn(map1_page),
 				page_to_pfn(map2_page), page_to_pfn(res_page),
 				PAGE_SIZE);
-	printk("Hypercall Result: %d\n", ret);
+	total++;
+	if (ret)
+		printk("Hypercall Result: %d Total: %d Failed: %d\n", ret, total, ++fail);
+	else if (total % 1000 == 0)
+		printk("Hypercall Result: %d Total: %d Failed: %d\n", ret, total, fail);
+
+	/* restore iteration variables to initial values */
+	page = start_page;
+	address = start_address;
+
 	/* Now update PTEs */
-	for (_pte = pte; _pte < pte + HPAGE_PMD_NR;
-			_pte++, page++, address += PAGE_SIZE) {
+	for (i = 0, _pte = pte; _pte < pte + HPAGE_PMD_NR;
+			i++, _pte++, page++, address += PAGE_SIZE) {
 		pte_t pteval = *_pte;
 		struct page *src_page;
 
 		if (pte_none(pteval) || is_zero_pfn(pte_pfn(pteval))) {
+			clear_user_highpage(page, address);
+			add_mm_counter(vma->vm_mm, MM_ANONPAGES, 1);
 			if (is_zero_pfn(pte_pfn(pteval))) {
-				clear_user_highpage(page, address);
-				add_mm_counter(vma->vm_mm, MM_ANONPAGES, 1);
 				spin_lock(ptl);
 				pte_clear(vma->vm_mm, address, _pte);
 				spin_unlock(ptl);
@@ -939,7 +950,7 @@ static void __collapse_huge_page_hc(pte_t *pte, struct page *page,
 			/* copy here if hypervisor failed to switch */
 			if (res_addr[i])
 				copy_user_highpage(page, src_page, address, vma);
-
+			VM_BUG_ON_PAGE(page_mapcount(src_page) != 1, src_page);
 			release_pte_page(src_page);
 			spin_lock(ptl);
 			pte_clear(vma->vm_mm, address, _pte);
@@ -956,8 +967,10 @@ static void __collapse_huge_page_copy(pte_t *pte, struct page *page,
 		spinlock_t *ptl)
 {
 	pte_t *_pte;
-	if (khugepaged_collapse_via_hypercall)
+	if (khugepaged_collapse_via_hypercall) {
 		__collapse_huge_page_hc(pte, page, vma, address, ptl);
+		return;
+	}
 
 	for (_pte = pte; _pte < pte + HPAGE_PMD_NR;
 			_pte++, page++, address += PAGE_SIZE) {
