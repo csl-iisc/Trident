@@ -57,6 +57,10 @@ enum scan_result {
 #define CREATE_TRACE_POINTS
 #include <trace/events/huge_memory.h>
 
+struct page *map1_page;
+struct page *map2_page;
+struct page *res_page;
+
 /* default scan 8*512 pte (or vmas) every 30 second */
 static unsigned int khugepaged_pages_to_scan __read_mostly;
 static unsigned int khugepaged_pages_collapsed;
@@ -876,12 +880,85 @@ static void __collapse_huge_pmd_copy(pmd_t *pmd, struct page *page,
 	free_page_and_swap_cache(src_page);
 }
 
+static inline void khugepaged_clear_hc_pages(void)
+{
+	clear_page(page_to_virt(map1_page));
+	clear_page(page_to_virt(map2_page));
+	clear_page(page_to_virt(res_page));
+}
+
+static void __collapse_huge_page_hc(pte_t *pte, struct page *page,
+					struct vm_area_struct *vma,
+					unsigned long address,
+					spinlock_t *ptl)
+{
+	pte_t *_pte;
+	int i, ret;
+	unsigned long *map1_addr, *map2_addr, *res_addr;
+
+	map1_addr = (unsigned long *)page_to_virt(map1_page);
+	map2_addr = (unsigned long *)page_to_virt(map2_page);
+	res_addr = (unsigned long *)page_to_virt(res_page);
+	khugepaged_clear_hc_pages();
+	/* gather all gfs to be swapped */
+	for (i = 0, _pte = pte; _pte < pte + HPAGE_PMD_NR;
+			_pte++, page++, address += PAGE_SIZE, i++) {
+		pte_t pteval = *_pte;
+		struct page *src_page;
+
+		if (pte_none(pteval) || is_zero_pfn(pte_pfn(pteval)))
+			continue;
+
+		src_page = pte_page(pteval);
+		map1_addr[i] = page_to_pfn(page);
+		map2_addr[i] = page_to_pfn(src_page);
+	}
+
+	/* make the hypercall here */
+	ret = kvm_hypercall4(KVM_HC_EXCHANGE_PFN_RANGE, page_to_pfn(map1_page),
+				page_to_pfn(map2_page), page_to_pfn(res_page),
+				PAGE_SIZE);
+	printk("Hypercall Result: %d\n", ret);
+	/* Now update PTEs */
+	for (_pte = pte; _pte < pte + HPAGE_PMD_NR;
+			_pte++, page++, address += PAGE_SIZE) {
+		pte_t pteval = *_pte;
+		struct page *src_page;
+
+		if (pte_none(pteval) || is_zero_pfn(pte_pfn(pteval))) {
+			if (is_zero_pfn(pte_pfn(pteval))) {
+				clear_user_highpage(page, address);
+				add_mm_counter(vma->vm_mm, MM_ANONPAGES, 1);
+				spin_lock(ptl);
+				pte_clear(vma->vm_mm, address, _pte);
+				spin_unlock(ptl);
+			}
+		} else {
+			src_page = pte_page(pteval);
+
+			/* copy here if hypervisor failed to switch */
+			if (res_addr[i])
+				copy_user_highpage(page, src_page, address, vma);
+
+			release_pte_page(src_page);
+			spin_lock(ptl);
+			pte_clear(vma->vm_mm, address, _pte);
+			page_remove_rmap(src_page, false);
+			spin_unlock(ptl);
+			free_page_and_swap_cache(src_page);
+		}
+	}
+}
+
 static void __collapse_huge_page_copy(pte_t *pte, struct page *page,
 		struct vm_area_struct *vma,
 		unsigned long address,
 		spinlock_t *ptl)
 {
 	pte_t *_pte;
+	if (khugepaged_collapse_via_hypercall)
+		__collapse_huge_page_hc(pte, page, vma, address, ptl);
+
 	for (_pte = pte; _pte < pte + HPAGE_PMD_NR;
 			_pte++, page++, address += PAGE_SIZE) {
 		pte_t pteval = *_pte;
@@ -2656,6 +2733,13 @@ static int khugepaged(void *none)
 	set_freezable();
 	set_user_nice(current, MAX_NICE);
 
+	map1_page = alloc_pages(GFP_KERNEL, 0);
+	map2_page = alloc_pages(GFP_KERNEL, 0);
+	res_page = alloc_pages(GFP_KERNEL, 0);
+	if (!map1_page || !map2_page || !res_page) {
+		printk("Khugepaged: out-of-memory\n");
+		goto out;
+	}
 	while (!kthread_should_stop()) {
 		khugepaged_do_scan();
 		khugepaged_wait_work();
@@ -2667,6 +2751,14 @@ static int khugepaged(void *none)
 	if (mm_slot)
 		collect_mm_slot(mm_slot);
 	spin_unlock(&khugepaged_mm_lock);
+out:
+	if (map1_page)
+		__free_pages(map1_page, 0);
+	if (map2_page)
+		__free_pages(map2_page, 0);
+	if (res_page)
+		__free_pages(res_page, 0);
+
 	return 0;
 }
 
