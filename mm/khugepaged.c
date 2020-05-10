@@ -882,8 +882,6 @@ static void __collapse_huge_pmd_copy(pmd_t *pmd, struct page *page,
 
 static inline void khugepaged_clear_hc_pages(void)
 {
-	clear_page(page_to_virt(map1_page));
-	clear_page(page_to_virt(map2_page));
 	clear_page(page_to_virt(res_page));
 }
 
@@ -908,8 +906,11 @@ static void __collapse_huge_page_hc(pte_t *pte, struct page *page,
 		pte_t pteval = *_pte;
 		struct page *src_page;
 
-		if (pte_none(pteval) || is_zero_pfn(pte_pfn(pteval)))
+		if (pte_none(pteval) || is_zero_pfn(pte_pfn(pteval))) {
+			map1_addr[i] = 0;
+			map2_addr[i] = 0;
 			continue;
+		}
 
 		src_page = pte_page(pteval);
 		map1_addr[i] = page_to_pfn(page);
