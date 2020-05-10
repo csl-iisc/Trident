@@ -1791,6 +1791,53 @@ static int kvm_handle_hva_range(struct kvm *kvm,
 	return ret;
 }
 
+static int kvm_handle_hva_range_2(struct kvm *kvm,
+				unsigned long start,
+				unsigned long end,
+				int level,
+				int (*handler)(struct kvm *kvm,
+					       struct kvm_rmap_head *rmap_head,
+					       struct kvm_memory_slot *slot,
+					       gfn_t gfn,
+					       int level,
+					       unsigned long data))
+{
+	struct kvm_memslots *slots;
+	struct kvm_memory_slot *memslot;
+	struct slot_rmap_walk_iterator iterator;
+	int ret = 0;
+	int i;
+
+	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++) {
+		slots = __kvm_memslots(kvm, i);
+		kvm_for_each_memslot(memslot, slots) {
+			unsigned long hva_start, hva_end;
+			gfn_t gfn_start, gfn_end;
+
+			hva_start = max(start, memslot->userspace_addr);
+			hva_end = min(end, memslot->userspace_addr +
+				      (memslot->npages << PAGE_SHIFT));
+			if (hva_start >= hva_end)
+				continue;
+			/*
+			 * {gfn(page) | page intersects with [hva_start, hva_end)} =
+			 * {gfn_start, gfn_start+1, ..., gfn_end-1}.
+			 */
+			gfn_start = hva_to_gfn_memslot(hva_start, memslot);
+			gfn_end = hva_to_gfn_memslot(hva_end + PAGE_SIZE - 1, memslot);
+
+			for_each_slot_rmap_range(memslot, level,
+						 PT_MAX_HUGEPAGE_LEVEL,
+						 gfn_start, gfn_end - 1,
+						 &iterator)
+				ret |= handler(kvm, iterator.rmap, memslot,
+					       iterator.gfn, iterator.level, 0);
+		}
+	}
+
+	return ret;
+}
+
 static int kvm_handle_hva(struct kvm *kvm, unsigned long hva,
 			  unsigned long data,
 			  int (*handler)(struct kvm *kvm,
@@ -1807,9 +1854,17 @@ int kvm_unmap_hva(struct kvm *kvm, unsigned long hva)
 	return kvm_handle_hva(kvm, hva, 0, kvm_unmap_rmapp);
 }
 
-int kvm_unmap_hva_range(struct kvm *kvm, unsigned long start, unsigned long end)
+int kvm_unmap_hva_range(struct kvm *kvm, unsigned long start,
+					unsigned long end, int size)
 {
-	return kvm_handle_hva_range(kvm, start, end, 0, kvm_unmap_rmapp);
+	if (size == HPAGE_PMD_SIZE)
+		return kvm_handle_hva_range_2(kvm, start, end,
+						PT_PAGE_TABLE_LEVEL + 1,
+						kvm_unmap_rmapp);
+
+	return kvm_handle_hva_range_2(kvm, start, end,
+						PT_PAGE_TABLE_LEVEL,
+						kvm_unmap_rmapp);
 }
 
 void kvm_set_spte_hva(struct kvm *kvm, unsigned long hva, pte_t pte)
