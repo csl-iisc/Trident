@@ -4750,11 +4750,15 @@ static inline bool feasible_page_exchange(pte_t *ptep1, pte_t *ptep2)
 
 static inline bool feasible_thp_exchange(pmd_t *pmd1, pmd_t *pmd2)
 {
-	if (!pmd1 || !pmd2)
+	if (!pmd1 || !pmd2) {
+		printk("No PMD\n");
 		return false;
+	}
 
-	if (!pmd_trans_huge(*pmd1) || !pmd_trans_huge(*pmd2))
+	if (!pmd_trans_huge(*pmd1) || !pmd_trans_huge(*pmd2)) {
+		printk("No THP PMD\n");
 		return false;
+	}
 
 	return true;
 }
@@ -4797,7 +4801,10 @@ static int tr_exchange_huge_pages(struct mm_struct *mm, unsigned long addr1,
 	down_read(&mm->mmap_sem);
 	vma1 = find_vma(mm, addr1);
 	vma2 = find_vma(mm, addr2);
+	if (!vma1 || !vma2) {
+		printk("No VMA\n");
 		goto failed;
+	}
 
 	pmd1 = get_mm_pmd(mm, addr1);
 	pmd2 = get_mm_pmd(mm, addr2);
@@ -4836,7 +4843,7 @@ static int tr_exchange_huge_pages(struct mm_struct *mm, unsigned long addr1,
 	return 0;
 
 failed:
-	down_read(&mm->mmap_sem);
+	up_read(&mm->mmap_sem);
 	return -EINVAL;
 }
 
@@ -4851,6 +4858,12 @@ static int tr_exchange_pages(struct mm_struct *mm, unsigned long addr1,
 	pmd1 = get_mm_pmd(mm, addr1);
 	pmd2 = get_mm_pmd(mm, addr2);
 	if (!pmd1 || !pmd2)
+		goto failed;
+
+	if (pmd_none(*pmd1) || pmd_trans_huge(*pmd1))
+		goto failed;
+
+	if (pmd_none(*pmd2) || pmd_trans_huge(*pmd2))
 		goto failed;
 
 	ptep1 = pte_offset_map(pmd1, addr1);
