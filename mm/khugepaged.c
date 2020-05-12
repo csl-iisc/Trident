@@ -968,10 +968,12 @@ static void __collapse_huge_page_copy(pte_t *pte, struct page *page,
 		spinlock_t *ptl)
 {
 	pte_t *_pte;
+#if 0
 	if (khugepaged_collapse_via_hypercall) {
 		__collapse_huge_page_hc(pte, page, vma, address, ptl);
 		return;
 	}
+#endif
 
 	for (_pte = pte; _pte < pte + HPAGE_PMD_NR;
 			_pte++, page++, address += PAGE_SIZE) {
@@ -1507,6 +1509,113 @@ out:
 	goto out_up_write;
 }
 
+static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_struct *vma,
+				pud_t *_pud, struct page *new_page, unsigned long address)
+{
+	int i, ret;
+	pmd_t *pmd;
+	pte_t *pte;
+	spinlock_t *pte_ptl, *pmd_ptl;
+	unsigned long *map1_addr, *map2_addr, *res_addr;
+	unsigned long start_address = address;
+
+	map1_addr = (unsigned long *)page_to_virt(map1_page);
+	map2_addr = (unsigned long *)page_to_virt(map2_page);
+	res_addr = (unsigned long *)page_to_virt(res_page);
+	khugepaged_clear_hc_pages();
+
+	/* We copy all the 512 pages, one after the other serially now */
+	for(i = 0; i < HPAGE_PMD_NR; i++) {
+		pmd = pmd_offset(_pud, address);
+		if(pmd_none(*pmd)) {
+			//address += PAGE_SIZE * HPAGE_PMD_NR;
+			//add_mm_counter(vma->vm_mm, MM_ANONPAGES, 512);
+			map1_addr[i] = 0;
+			map2_addr[i] = 0;
+			continue;
+		} else if(pmd_trans_huge(*pmd)) {
+			pmd_ptl = pmd_lockptr(mm, pmd);
+			//__collapse_huge_pmd_copy(pmd, new_page + (loop_index * HPAGE_PMD_NR),
+			//					vma, address, pmd_ptl);
+			map1_addr[i] = page_to_pfn(pmd_page(*pmd));
+			map2_addr[i] = page_to_pfn(new_page + (i * HPAGE_PMD_NR));
+		}
+		else {
+			pte = pte_offset_map(pmd, address);
+			pte_ptl = pte_lockptr(mm, pmd);
+			__collapse_huge_page_copy(pte, new_page + (i * HPAGE_PMD_NR),
+								vma, address, pte_ptl);
+			pte_unmap(pte);
+			map1_addr[i] = 0;
+			map2_addr[i] = 0;
+		}
+		address += PAGE_SIZE * HPAGE_PMD_NR;
+	}
+
+	ret = kvm_hypercall4(KVM_HC_EXCHANGE_PFN_RANGE, page_to_pfn(map1_page),
+				page_to_pfn(map2_page), page_to_pfn(res_page),
+				HPAGE_PMD_SIZE);
+	printk("%s: Hypercall result: %d\n", __func__, ret);
+	address = start_address;
+	for(i = 0; i < HPAGE_PMD_NR; i++) {
+		pmd = pmd_offset(_pud, address);
+		if(pmd_none(*pmd)) {
+			address += PAGE_SIZE * HPAGE_PMD_NR;
+			add_mm_counter(vma->vm_mm, MM_ANONPAGES, 512);
+			continue;
+		} else if (pmd_trans_huge(*pmd) && res_addr[i]) {
+			pmd_ptl = pmd_lockptr(mm, pmd);
+			__collapse_huge_pmd_copy(pmd, new_page + (i * HPAGE_PMD_NR),
+								vma, address, pmd_ptl);
+		}
+		address += PAGE_SIZE * HPAGE_PMD_NR;
+	}
+	if (ret != 0)
+		printk("Promotion fixed by copying failed over pages\n");
+
+}
+
+static inline void __collapse_pud_page_copy(struct mm_struct *mm, struct vm_area_struct *vma,
+				pud_t *_pud, struct page *new_page, unsigned long address)
+{
+	int loop_index;
+	pmd_t *pmd;
+	pte_t *pte;
+	spinlock_t *pte_ptl, *pmd_ptl;
+
+	if (khugepaged_collapse_via_hypercall)
+		return __collapse_pud_page_hc(mm, vma, _pud, new_page, address);
+
+	/* We copy all the 512 pages, one after the other serially now */
+	for(loop_index = 0; loop_index < HPAGE_PMD_NR; loop_index++) {
+		pmd = pmd_offset(_pud, address);
+		if(pmd_none(*pmd)) {
+			address += PAGE_SIZE * HPAGE_PMD_NR;
+			add_mm_counter(vma->vm_mm, MM_ANONPAGES, 512);
+			//map1_addr[i] = 0;
+			//map2_addr[i] = 0;
+			continue;
+		}
+		if(pmd_trans_huge(*pmd)) {
+			pmd_ptl = pmd_lockptr(mm, pmd);
+			__collapse_huge_pmd_copy(pmd, new_page + (loop_index * HPAGE_PMD_NR),
+								vma, address, pmd_ptl);
+			//map1_addr[i] = page_to_pfn(pmd_page(*pmd));
+			//map2_addr[i] = page_to_pfn(new_page + (loop_index * HPAGE_PMD_NR));
+		}
+		else {
+			pte = pte_offset_map(pmd, address);
+			pte_ptl = pte_lockptr(mm, pmd);
+			__collapse_huge_page_copy(pte, new_page + (loop_index * HPAGE_PMD_NR),
+								vma, address, pte_ptl);
+			pte_unmap(pte);
+			///map1_addr[i] = 0;
+			//map2_addr[i] = 0;
+		}
+		address += PAGE_SIZE * HPAGE_PMD_NR;
+	}
+}
+
 /* This is the new modified function which collapses a huge 1GB page */
 static int collapse_huge_onegb_page(struct mm_struct *mm,
 		unsigned long address,
@@ -1688,26 +1797,9 @@ static int collapse_huge_onegb_page(struct mm_struct *mm,
 	anon_vma_unlock_write(vma->anon_vma);
 	address = backed_address;
 
-	/* We copy all the 512 pages, one after the other serially now */
-	for(loop_index = 0; loop_index < HPAGE_PMD_NR; loop_index++){
-		pmd = pmd_offset(&_pud, address);
-		if(pmd_none(*pmd)){
-			address += PAGE_SIZE * HPAGE_PMD_NR;
-			add_mm_counter(vma->vm_mm, MM_ANONPAGES, 512);
-			continue;
-		}
-		if(pmd_trans_huge(*pmd)){
-			pmd_ptl = pmd_lockptr(mm, pmd);
-			__collapse_huge_pmd_copy(pmd, new_page + (loop_index * HPAGE_PMD_NR), vma, address, pmd_ptl);
-		}
-		else{
-			pte = pte_offset_map(pmd, address);
-			pte_ptl = pte_lockptr(mm, pmd);
-			__collapse_huge_page_copy(pte, new_page + (loop_index * HPAGE_PMD_NR), vma, address, pte_ptl);
-			pte_unmap(pte);
-		}
-		address += PAGE_SIZE * HPAGE_PMD_NR;
-	}
+	/* deleted from here*/
+	__collapse_pud_page_copy(mm, vma, &_pud, new_page, address);
+
 	printk(KERN_DEBUG "DEBUG: Passed %s %d \n",__FUNCTION__,__LINE__);
 	address = backed_address;
 	__SetPageUptodate(new_page);
