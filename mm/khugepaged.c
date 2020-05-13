@@ -457,7 +457,7 @@ int __init khugepaged_init(void)
 		return -ENOMEM;
 
 	//khugepaged_pages_to_scan = HPAGE_PMD_NR * 8;
-	khugepaged_pages_to_scan = HPAGE_PUD_NR * 8;
+	khugepaged_pages_to_scan = HPAGE_PUD_NR * 2;
 	//khugepaged_max_ptes_none = HPAGE_PMD_NR - 1;
 	khugepaged_max_ptes_none = HPAGE_PUD_NR - 1;
 	khugepaged_max_ptes_swap = HPAGE_PMD_NR / 8;
@@ -1512,7 +1512,7 @@ out:
 static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_struct *vma,
 				pud_t *_pud, struct page *new_page, unsigned long address)
 {
-	int i, ret;
+	int i, ret = 0, nr_pmds = 0;
 	pmd_t *pmd;
 	pte_t *pte;
 	spinlock_t *pte_ptl, *pmd_ptl;
@@ -1539,6 +1539,7 @@ static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_s
 			//					vma, address, pmd_ptl);
 			map1_addr[i] = page_to_pfn(pmd_page(*pmd));
 			map2_addr[i] = page_to_pfn(new_page + (i * HPAGE_PMD_NR));
+			nr_pmds++;
 		}
 		else {
 			pte = pte_offset_map(pmd, address);
@@ -1551,11 +1552,13 @@ static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_s
 		}
 		address += PAGE_SIZE * HPAGE_PMD_NR;
 	}
-
-	ret = kvm_hypercall4(KVM_HC_EXCHANGE_PFN_RANGE, page_to_pfn(map1_page),
-				page_to_pfn(map2_page), page_to_pfn(res_page),
-				HPAGE_PMD_SIZE);
-	printk("%s: Hypercall result: %d\n", __func__, ret);
+	/* Invoke hypercall only for densely packed regions */
+	if (nr_pmds > 100) {
+		ret = kvm_hypercall4(KVM_HC_EXCHANGE_PFN_RANGE, page_to_pfn(map1_page),
+					page_to_pfn(map2_page), page_to_pfn(res_page),
+					HPAGE_PMD_SIZE);
+		printk("%s: Hypercall result: %d PMDs: %d\n", __func__, ret, nr_pmds);
+	}
 	address = start_address;
 	for(i = 0; i < HPAGE_PMD_NR; i++) {
 		pmd = pmd_offset(_pud, address);
@@ -1563,7 +1566,7 @@ static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_s
 			address += PAGE_SIZE * HPAGE_PMD_NR;
 			add_mm_counter(vma->vm_mm, MM_ANONPAGES, 512);
 			continue;
-		} else if (pmd_trans_huge(*pmd) && res_addr[i]) {
+		} else if (pmd_trans_huge(*pmd) && (res_addr[i] || nr_pmds < 101)) {
 			pmd_ptl = pmd_lockptr(mm, pmd);
 			__collapse_huge_pmd_copy(pmd, new_page + (i * HPAGE_PMD_NR),
 								vma, address, pmd_ptl);
