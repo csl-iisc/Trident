@@ -1595,16 +1595,12 @@ static inline void __collapse_pud_page_copy(struct mm_struct *mm, struct vm_area
 		if(pmd_none(*pmd)) {
 			address += PAGE_SIZE * HPAGE_PMD_NR;
 			add_mm_counter(vma->vm_mm, MM_ANONPAGES, 512);
-			//map1_addr[i] = 0;
-			//map2_addr[i] = 0;
 			continue;
 		}
 		if(pmd_trans_huge(*pmd)) {
 			pmd_ptl = pmd_lockptr(mm, pmd);
 			__collapse_huge_pmd_copy(pmd, new_page + (loop_index * HPAGE_PMD_NR),
 								vma, address, pmd_ptl);
-			//map1_addr[i] = page_to_pfn(pmd_page(*pmd));
-			//map2_addr[i] = page_to_pfn(new_page + (loop_index * HPAGE_PMD_NR));
 		}
 		else {
 			pte = pte_offset_map(pmd, address);
@@ -1612,8 +1608,6 @@ static inline void __collapse_pud_page_copy(struct mm_struct *mm, struct vm_area
 			__collapse_huge_page_copy(pte, new_page + (loop_index * HPAGE_PMD_NR),
 								vma, address, pte_ptl);
 			pte_unmap(pte);
-			///map1_addr[i] = 0;
-			//map2_addr[i] = 0;
 		}
 		address += PAGE_SIZE * HPAGE_PMD_NR;
 	}
