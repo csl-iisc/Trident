@@ -1566,10 +1566,22 @@ static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_s
 			address += PAGE_SIZE * HPAGE_PMD_NR;
 			add_mm_counter(vma->vm_mm, MM_ANONPAGES, 512);
 			continue;
-		} else if (pmd_trans_huge(*pmd) && (res_addr[i] || nr_pmds < 101)) {
+		} else if (pmd_trans_huge(*pmd)) {
 			pmd_ptl = pmd_lockptr(mm, pmd);
-			__collapse_huge_pmd_copy(pmd, new_page + (i * HPAGE_PMD_NR),
-								vma, address, pmd_ptl);
+			if (res_addr[i] || nr_pmds < 101) {
+				__collapse_huge_pmd_copy(pmd, new_page + (i * HPAGE_PMD_NR),
+									vma, address, pmd_ptl);
+			} else {
+				struct page *src_page;
+
+				curr_page = pmd_page(*pmd);
+				release_pte_page(src_page);
+				spin_lock(pmd_ptl);
+				pmd_clear(pmd);
+				page_remove_rmap(src_page, true);
+				spin_unlock(pmd_ptl);
+				free_page_and_swap_cache(src_page);
+			}
 		}
 		address += PAGE_SIZE * HPAGE_PMD_NR;
 	}
