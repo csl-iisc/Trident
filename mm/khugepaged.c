@@ -2775,15 +2775,24 @@ static int khugepaged_wait_event(void)
 		kthread_should_stop();
 }
 
+static inline uint64_t rdtscp(void)
+{
+	uint32_t eax, edx;
+	__asm volatile ("rdtscp" : "=a" (eax), "=d" (edx) :: "ecx", "memory");
+	return ((uint64_t)edx << 32) | eax;
+}
+
 static void khugepaged_do_scan(void)
 {
 	struct page *hpage = NULL;
+	uint64_t start, end;
 	unsigned int progress = 0, pass_through_head = 0;
 	unsigned int pages = khugepaged_pages_to_scan;
 	bool wait = true;
 
 	barrier(); /* write khugepaged_pages_to_scan to local stack */
 
+	start = rdtscp();
 	while (progress < pages) {
 		if (!khugepaged_prealloc_page(&hpage, &wait))
 			break;
@@ -2804,7 +2813,8 @@ static void khugepaged_do_scan(void)
 			progress = pages;
 		spin_unlock(&khugepaged_mm_lock);
 	}
-
+	end = rdtscp();
+	printk("khugepaged -- cycles: %llu\n", end-start);
 	if (!IS_ERR_OR_NULL(hpage))
 		put_page(hpage);
 }
@@ -2835,9 +2845,40 @@ static void khugepaged_wait_work(void)
 		wait_event_freezable(khugepaged_wait, khugepaged_wait_event());
 }
 
+unsigned long get_time_difference(struct timeval *t0, struct timeval *t1)
+{
+	long msecs;
+
+	msecs = (t1->tv_sec - t0->tv_sec) * 1000 +
+				(t1->tv_usec - t0->tv_usec) / 1000;
+	if (msecs < 0)
+		msecs = 0;
+
+	return (unsigned long) msecs;
+}
+
+
+static void khugepaged_adjust_sleep(unsigned long busy_msecs)
+{
+	long idle_msecs;
+	long khugepaged_min_sleep;
+
+	/* boud by max 10% cpu utilization */
+	idle_msecs = (busy_msecs * 100) / 10;
+	/* sleep for atleast 1 second */
+	khugepaged_min_sleep = 1000;
+	if (idle_msecs < khugepaged_min_sleep)
+		idle_msecs = khugepaged_min_sleep;
+
+	wait_event_freezable_timeout(khugepaged_wait, kthread_should_stop(),
+					msecs_to_jiffies((unsigned long)idle_msecs));
+}
+
 static int khugepaged(void *none)
 {
 	struct mm_slot *mm_slot;
+	struct timeval t0, t1;
+	unsigned long busy_msecs;
 
 	set_freezable();
 	set_user_nice(current, MAX_NICE);
@@ -2850,8 +2891,12 @@ static int khugepaged(void *none)
 		goto out;
 	}
 	while (!kthread_should_stop()) {
+		do_gettimeofday(&t0);
 		khugepaged_do_scan();
-		khugepaged_wait_work();
+		do_gettimeofday(&t1);
+		busy_msecs =  get_time_difference(&t0, &t1);
+		khugepaged_adjust_sleep(busy_msecs);
+		//khugepaged_wait_work();
 	}
 
 	spin_lock(&khugepaged_mm_lock);
