@@ -85,6 +85,7 @@ static unsigned int khugepaged_max_ptes_swap __read_mostly;
  * default collapsing method.
  */
 static unsigned int khugepaged_collapse_via_hypercall __read_mostly = 0;
+static unsigned int khugepaged_max_cpu __read_mostly = 0;
 
 #define MM_SLOTS_HASH_BITS 10
 static __read_mostly DEFINE_HASHTABLE(mm_slots_hash, MM_SLOTS_HASH_BITS);
@@ -148,6 +149,33 @@ static ssize_t collapse_via_hypercall_store(struct kobject *kobj,
 static struct kobj_attribute khugepaged_collapse_via_hypercall_attr =
 __ATTR(collapse_via_hypercall, 0644, collapse_via_hypercall_show,
 		collapse_via_hypercall_store);
+
+static ssize_t max_cpu_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
+{
+	return sprintf(buf, "%u\n", khugepaged_max_cpu);
+}
+
+static ssize_t max_cpu_store(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		const char *buf, size_t count)
+{
+	unsigned long val;
+	int err;
+
+	err = kstrtol(buf, 10, &val);
+	if (err || val > 100)
+		return -EINVAL;
+
+	khugepaged_max_cpu = val;
+
+	return count;
+}
+
+static struct kobj_attribute khugepaged_max_cpu_attr =
+__ATTR(max_cpu, 0644, max_cpu_show,
+		max_cpu_store);
 
 static ssize_t scan_sleep_millisecs_show(struct kobject *kobj,
 		struct kobj_attribute *attr,
@@ -398,6 +426,7 @@ static struct attribute *khugepaged_attr[] = {
 	&khugepaged_collapse_pud_attr.attr,
 	&khugepaged_collapse_pmd_attr.attr,
 	&khugepaged_collapse_via_hypercall_attr.attr,
+	&khugepaged_max_cpu_attr.attr,
 	NULL,
 };
 
@@ -1574,7 +1603,7 @@ static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_s
 			} else {
 				struct page *src_page;
 
-				curr_page = pmd_page(*pmd);
+				src_page = pmd_page(*pmd);
 				release_pte_page(src_page);
 				spin_lock(pmd_ptl);
 				pmd_clear(pmd);
@@ -2867,12 +2896,11 @@ unsigned long get_time_difference(struct timeval *t0, struct timeval *t1)
 static void khugepaged_adjust_sleep(unsigned long busy_msecs)
 {
 	long idle_msecs;
-	long khugepaged_min_sleep;
+	long khugepaged_min_sleep = 1000;
 
 	/* boud by max 10% cpu utilization */
-	idle_msecs = (busy_msecs * 100) / 10;
+	idle_msecs = (busy_msecs * 100) / khugepaged_max_cpu;
 	/* sleep for atleast 1 second */
-	khugepaged_min_sleep = 1000;
 	if (idle_msecs < khugepaged_min_sleep)
 		idle_msecs = khugepaged_min_sleep;
 
@@ -2901,8 +2929,11 @@ static int khugepaged(void *none)
 		khugepaged_do_scan();
 		do_gettimeofday(&t1);
 		busy_msecs =  get_time_difference(&t0, &t1);
-		khugepaged_adjust_sleep(busy_msecs);
-		//khugepaged_wait_work();
+		/* Limit CPU usage or use default policy */
+		if (khugepaged_max_cpu)
+			khugepaged_adjust_sleep(busy_msecs);
+		else
+			khugepaged_wait_work();
 	}
 
 	spin_lock(&khugepaged_mm_lock);
