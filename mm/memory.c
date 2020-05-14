@@ -4751,12 +4751,12 @@ static inline bool feasible_page_exchange(pte_t *ptep1, pte_t *ptep2)
 static inline bool feasible_thp_exchange(pmd_t *pmd1, pmd_t *pmd2)
 {
 	if (!pmd1 || !pmd2) {
-		printk("No PMD\n");
+		/* printk("No PMD\n"); */
 		return false;
 	}
 
 	if (!pmd_trans_huge(*pmd1) || !pmd_trans_huge(*pmd2)) {
-		printk("No THP PMD\n");
+		/* printk("No THP PMD\n"); */
 		return false;
 	}
 
