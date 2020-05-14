@@ -1017,7 +1017,10 @@ int do_huge_pud_anonymous_page(struct vm_fault *vmf)
 		return ret;
 	}
 	gfp = alloc_hugepage_direct_gfpmask(vma);
+#if 0
 	page = alloc_hugepage_vma(gfp, vma, haddr, HPAGE_PUD_ORDER);
+#endif
+	page = NULL;
 	if (unlikely(!page)) {
 		count_vm_event(THHP_FAULT_FALLBACK);
 		return VM_FAULT_FALLBACK;
