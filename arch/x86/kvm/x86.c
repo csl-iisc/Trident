@@ -6730,9 +6730,12 @@ static int kvm_exchange_pfn_range(struct kvm_vcpu *vcpu, unsigned long gfn1,
 {
 	int i, ret = 0;
 	struct mm_struct *mm;
+#if 0
 	unsigned long addr1, addr2, addr3;
-	unsigned long *map1, *ptr1;
-	unsigned long *map2, *ptr2;
+#endif
+	unsigned long *map1, *map2;
+	unsigned long *ptr1, *ptr2, *ptr3;
+	struct page *page1, *page2, *page3;
 
 	if (gfn1 == gfn2)
 		return 0;
@@ -6746,23 +6749,37 @@ static int kvm_exchange_pfn_range(struct kvm_vcpu *vcpu, unsigned long gfn1,
 		kfree(map1);
 		return -ENOMEM;
 	}
-
 	mm = vcpu->kvm->mm;
 	mmget(mm);
+#if 0
 	addr1 = gfn_to_hva(vcpu->kvm, gfn1);
 	addr2 = gfn_to_hva(vcpu->kvm, gfn2);
-	addr3 = gfn_to_hva(vcpu->kvm, gfn3);
-	ptr1 = (unsigned long *)addr1;
-	ptr2 = (unsigned long *)addr2;
+	if (kvm_is_error_hva(addr1))
+		printk("addr1 invalid\n");
+
+	if (kvm_is_error_hva(addr2))
+		printk("addr2 invalid\n");
+
+	if (kvm_is_error_hva(addr3))
+		printk("addr3 invalid\n");
+#endif
+	page1 = gfn_to_page(vcpu->kvm, gfn1);
+	ptr1 = (unsigned long *)page_to_virt(page1);
+	page2 = gfn_to_page(vcpu->kvm, gfn2);
+	ptr2 = (unsigned long *)page_to_virt(page2);
+	page3 = gfn_to_page(vcpu->kvm, gfn2);
+	ptr3 = (unsigned long *)page_to_virt(page3);
 	for (i = 0; i < PAGE_SIZE / sizeof(unsigned long); i++) {
 		map1[i] = gfn_to_hva(vcpu->kvm, ptr1[i]);
 		map2[i] = gfn_to_hva(vcpu->kvm, ptr2[i]);
 	}
-	ret = tr_exchange_pfn_range(mm, map1, map2,
-					(unsigned long *)addr3, size);
+	ret = tr_exchange_pfn_range(mm, map1, map2, ptr3, size);
 	mmput(mm);
 	kfree(map1);
 	kfree(map2);
+	kvm_release_pfn_clean(page_to_pfn(page1));
+	kvm_release_pfn_clean(page_to_pfn(page2));
+	kvm_release_pfn_clean(page_to_pfn(page3));
 	return ret;
 }
 
