@@ -2820,14 +2820,14 @@ static inline uint64_t rdtscp(void)
 static void khugepaged_do_scan(void)
 {
 	struct page *hpage = NULL;
-	uint64_t start, end;
+	//uint64_t start, end;
 	unsigned int progress = 0, pass_through_head = 0;
 	unsigned int pages = khugepaged_pages_to_scan;
 	bool wait = true;
 
 	barrier(); /* write khugepaged_pages_to_scan to local stack */
 
-	start = rdtscp();
+	//start = rdtscp();
 	while (progress < pages) {
 		if (!khugepaged_prealloc_page(&hpage, &wait))
 			break;
@@ -2848,8 +2848,8 @@ static void khugepaged_do_scan(void)
 			progress = pages;
 		spin_unlock(&khugepaged_mm_lock);
 	}
-	end = rdtscp();
-	printk("khugepaged -- cycles: %llu\n", end-start);
+	//end = rdtscp();
+	//printk("khugepaged -- cycles: %llu\n", end-start);
 	if (!IS_ERR_OR_NULL(hpage))
 		put_page(hpage);
 }
