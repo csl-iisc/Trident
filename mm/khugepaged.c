@@ -86,6 +86,7 @@ static unsigned int khugepaged_max_ptes_swap __read_mostly;
  */
 static unsigned int khugepaged_collapse_via_hypercall __read_mostly = 0;
 static unsigned int khugepaged_max_cpu __read_mostly = 0;
+static unsigned int khugepaged_verbose __read_mostly = 0;
 
 #define MM_SLOTS_HASH_BITS 10
 static __read_mostly DEFINE_HASHTABLE(mm_slots_hash, MM_SLOTS_HASH_BITS);
@@ -176,6 +177,32 @@ static ssize_t max_cpu_store(struct kobject *kobj,
 static struct kobj_attribute khugepaged_max_cpu_attr =
 __ATTR(max_cpu, 0644, max_cpu_show,
 		max_cpu_store);
+
+static ssize_t verbose_show(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		char *buf)
+{
+	return sprintf(buf, "%u\n", khugepaged_verbose);
+}
+
+static ssize_t verbose_store(struct kobject *kobj,
+		struct kobj_attribute *attr,
+		const char *buf, size_t count)
+{
+	unsigned long val;
+	int err;
+
+	err = kstrtol(buf, 10, &val);
+	if (err || val > 1)
+		return -EINVAL;
+
+	khugepaged_verbose = val;
+
+	return count;
+}
+
+static struct kobj_attribute khugepaged_verbose_attr =
+__ATTR(verbose, 0644, verbose_show, verbose_store);
 
 static ssize_t scan_sleep_millisecs_show(struct kobject *kobj,
 		struct kobj_attribute *attr,
@@ -427,6 +454,7 @@ static struct attribute *khugepaged_attr[] = {
 	&khugepaged_collapse_pmd_attr.attr,
 	&khugepaged_collapse_via_hypercall_attr.attr,
 	&khugepaged_max_cpu_attr.attr,
+	&khugepaged_verbose_attr.attr,
 	NULL,
 };
 
@@ -1538,15 +1566,19 @@ out:
 	goto out_up_write;
 }
 
-static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_struct *vma,
+static inline bool __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_struct *vma,
 				pud_t *_pud, struct page *new_page, unsigned long address)
 {
-	int i, ret = 0, nr_pmds = 0;
+	static bool skip = false;
+	int i, ret = 0, nr_pmds = 0, nr_none = 0, nr_ptes = 0;
 	pmd_t *pmd;
 	pte_t *pte;
 	spinlock_t *pte_ptl, *pmd_ptl;
 	unsigned long *map1_addr, *map2_addr, *res_addr;
 	unsigned long start_address = address;
+
+	if (skip)
+		return false;
 
 	map1_addr = (unsigned long *)page_to_virt(map1_page);
 	map2_addr = (unsigned long *)page_to_virt(map2_page);
@@ -1557,10 +1589,11 @@ static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_s
 	for(i = 0; i < HPAGE_PMD_NR; i++) {
 		pmd = pmd_offset(_pud, address);
 		if(pmd_none(*pmd)) {
-			//address += PAGE_SIZE * HPAGE_PMD_NR;
+			address += PAGE_SIZE * HPAGE_PMD_NR;
 			//add_mm_counter(vma->vm_mm, MM_ANONPAGES, 512);
 			map1_addr[i] = 0;
 			map2_addr[i] = 0;
+			nr_none++;
 			continue;
 		} else if(pmd_trans_huge(*pmd)) {
 			pmd_ptl = pmd_lockptr(mm, pmd);
@@ -1578,16 +1611,23 @@ static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_s
 			pte_unmap(pte);
 			map1_addr[i] = 0;
 			map2_addr[i] = 0;
+			nr_ptes++;
 		}
 		address += PAGE_SIZE * HPAGE_PMD_NR;
 	}
 	/* Invoke hypercall only for densely packed regions */
-	if (nr_pmds > 100) {
+	if (khugepaged_verbose)
+	printk("Checking hypercall: %d %d %d\n", nr_pmds, nr_ptes, nr_none);
+	if (nr_pmds > 1) {
 		ret = kvm_hypercall4(KVM_HC_EXCHANGE_PFN_RANGE, page_to_pfn(map1_page),
 					page_to_pfn(map2_page), page_to_pfn(res_page),
 					HPAGE_PMD_SIZE);
 		printk("%s: Hypercall result: %d PMDs: %d\n", __func__, ret, nr_pmds);
-	}
+		if (ret)
+			skip = true;
+	} else
+		skip = true;
+
 	address = start_address;
 	for(i = 0; i < HPAGE_PMD_NR; i++) {
 		pmd = pmd_offset(_pud, address);
@@ -1597,10 +1637,14 @@ static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_s
 			continue;
 		} else if (pmd_trans_huge(*pmd)) {
 			pmd_ptl = pmd_lockptr(mm, pmd);
-			if (res_addr[i] || nr_pmds < 101) {
+			if (res_addr[i] || nr_pmds < 2) {
+				if (khugepaged_verbose)
+				printk("promoting-%d %d address-%lu\n", res_addr[i], nr_pmds, address);
 				__collapse_huge_pmd_copy(pmd, new_page + (i * HPAGE_PMD_NR),
 									vma, address, pmd_ptl);
 			} else {
+				if (khugepaged_verbose)
+				printk("freering hypercall wala page -%lu\n", address);
 				struct page *src_page;
 
 				src_page = pmd_page(*pmd);
@@ -1614,9 +1658,10 @@ static inline void __collapse_pud_page_hc(struct mm_struct *mm, struct vm_area_s
 		}
 		address += PAGE_SIZE * HPAGE_PMD_NR;
 	}
-	if (ret != 0)
+	if (ret != 0 && khugepaged_verbose)
 		printk("Promotion fixed by copying failed over pages\n");
 
+	return true;
 }
 
 static inline void __collapse_pud_page_copy(struct mm_struct *mm, struct vm_area_struct *vma,
@@ -1627,8 +1672,10 @@ static inline void __collapse_pud_page_copy(struct mm_struct *mm, struct vm_area
 	pte_t *pte;
 	spinlock_t *pte_ptl, *pmd_ptl;
 
-	if (khugepaged_collapse_via_hypercall)
-		return __collapse_pud_page_hc(mm, vma, _pud, new_page, address);
+	if (khugepaged_collapse_via_hypercall) {
+		if (__collapse_pud_page_hc(mm, vma, _pud, new_page, address))
+			return;
+	}
 
 	/* We copy all the 512 pages, one after the other serially now */
 	for(loop_index = 0; loop_index < HPAGE_PMD_NR; loop_index++) {
