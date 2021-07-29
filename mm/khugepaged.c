@@ -1058,10 +1058,8 @@ static void __collapse_huge_page_copy(pte_t *pte, struct page *page,
 				if (kvm_hypercall3(KVM_HC_EXCHANGE_PFNS,
 					page_to_pfn(page), page_to_pfn(src_page),
 					PAGE_SIZE)) {
-					trace_printk("***FAILED***\n");
 					copy_user_highpage(page, src_page, address, vma);
-				} else
-					trace_printk("****PASSED****\n");
+				}
 			} else
 				copy_user_highpage(page, src_page, address, vma);
 			VM_BUG_ON_PAGE(page_mapcount(src_page) != 1, src_page);
